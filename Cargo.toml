@@ -1,0 +1,16 @@
+[package]
+name = "type-union"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+type-union-derive = { path = "./type-union-derive" }
+
+[dev-dependencies]
+trybuild = "1.0"
+
+[workspace]
+
+members = ["type-union-derive"]
