@@ -4,31 +4,14 @@ use proc_macro2::TokenStream;
 use quote::{quote, ToTokens, TokenStreamExt};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::{bracketed, parenthesized, Attribute, Ident, Path, Token, Type};
+use syn::{parenthesized, Ident, Path, Token, Type};
 
-use crate::utils::{resolve_type_name, resolve_type_union_name, ParseStreamExt};
+use crate::utils::{
+    resolve_type_name, resolve_type_union_name, Attribute, Parenthesized, ParseStreamExt,
+    ParseablePunctuated,
+};
 
-pub struct ImplAttr {
-    _pound_token: Token![#],
-    _bracket_token: syn::token::Bracket,
-    _impl_token: Token![impl],
-    _paren_token: syn::token::Paren,
-    traits: Punctuated<Ident, Token![,]>,
-}
-
-impl Parse for ImplAttr {
-    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let brack_content;
-        let paren_content;
-        Ok(Self {
-            _pound_token: input.parse()?,
-            _bracket_token: bracketed!(brack_content in input),
-            _impl_token: brack_content.parse()?,
-            _paren_token: parenthesized!(paren_content in brack_content),
-            traits: paren_content.parse_terminated(Ident::parse)?,
-        })
-    }
-}
+pub type ImplAttr = Attribute<Token![impl], Parenthesized<ParseablePunctuated<Ident, Token![,]>>>;
 
 impl ImplAttr {
     const DERIVES: [(&str, &str); 4] = [
@@ -39,7 +22,7 @@ impl ImplAttr {
     ];
 
     pub fn traits(&self) -> impl Iterator<Item = &Ident> + '_ {
-        self.traits.iter()
+        self.inner.inner.iter()
     }
 
     #[must_use]
@@ -51,7 +34,7 @@ impl ImplAttr {
     }
 
     #[must_use]
-    pub fn derives(&self) -> Attribute {
+    pub fn derives(&self) -> syn::Attribute {
         let mut traits: Punctuated<Path, Token![,]> = Punctuated::new();
 
         for (trait_name, path) in Self::DERIVES {
@@ -60,7 +43,7 @@ impl ImplAttr {
             }
         }
 
-        Attribute {
+        syn::Attribute {
             pound_token: self._pound_token,
             style: syn::AttrStyle::Outer,
             bracket_token: self._bracket_token,
