@@ -19,11 +19,11 @@ impl ImplAttr {
     }
 
     #[must_use]
-    pub fn has<T>(&self, ty: T) -> bool
+    pub fn has<T>(&self, ty: &T) -> bool
     where
         Ident: PartialEq<T>,
     {
-        self.traits().any(|t| t == &ty)
+        self.traits().any(|t| t == ty)
     }
 
     #[must_use]
@@ -31,7 +31,7 @@ impl ImplAttr {
         let mut traits: Punctuated<Path, Token![,]> = Punctuated::new();
 
         for (trait_name, path) in Self::DERIVES {
-            if self.has(trait_name) {
+            if self.has(&trait_name) {
                 traits.push(syn::parse_str::<Path>(path).unwrap());
             }
         }

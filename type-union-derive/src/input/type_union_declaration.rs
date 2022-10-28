@@ -25,8 +25,12 @@ impl TypeUnionDeclaration {
             .flat_map(|ty| resolve_type_name(&ty).map(|ident| (ident, ty.clone())))
     }
 
+    pub fn type_union(&self) -> &TypeUnion {
+        &self.type_union
+    }
+
     #[must_use]
-    pub fn has_trait<T>(&self, ty: T) -> bool
+    pub fn has_trait<T>(&self, ty: &T) -> bool
     where
         Ident: PartialEq<T>,
     {
@@ -74,7 +78,7 @@ impl ToTokens for TypeUnionDeclaration {
         };
 
         let optional_partial_eq = {
-            if self.has_trait("PartialEq") {
+            if self.has_trait(&"PartialEq") {
                 quote! {
                     #(
                         impl PartialEq<#variant_types> for #ident {
