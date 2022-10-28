@@ -10,6 +10,7 @@ type-union-derive = { path = "./type-union-derive" }
 
 [dev-dependencies]
 trybuild = "1.0"
+static_assertions = "1.1"
 
 [workspace]
 

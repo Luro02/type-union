@@ -1,6 +1,7 @@
 use type_union::{define_type_union, type_union};
 
 define_type_union! {
+    #[impl(Debug, Clone, PartialEq)]
     enum (u8 | u16 | u64);
 }
 

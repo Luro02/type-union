@@ -1,190 +1,155 @@
-use std::collections::HashSet;
-
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens, TokenStreamExt};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::{parenthesized, Ident, Path, Token, Type};
+use syn::{Ident, ItemImpl, Token, Type};
 
-use crate::utils::{
-    resolve_type_name, resolve_type_union_name, Attribute, Parenthesized, ParseStreamExt,
-    ParseablePunctuated,
-};
+use crate::input::{TypeUnion, TypeUnionDeclaration};
+use crate::utils::unique_pairs;
 
-pub type ImplAttr = Attribute<Token![impl], Parenthesized<ParseablePunctuated<Ident, Token![,]>>>;
-
-impl ImplAttr {
-    const DERIVES: [(&str, &str); 4] = [
-        ("Copy", "::core::marker::Copy"),
-        ("Clone", "::core::clone::Clone"),
-        ("Debug", "::core::fmt::Debug"),
-        ("PartialEq", "::core::cmp::PartialEq"),
-    ];
-
-    pub fn traits(&self) -> impl Iterator<Item = &Ident> + '_ {
-        self.inner.inner.iter()
-    }
-
-    #[must_use]
-    pub fn has<T>(&self, ty: T) -> bool
-    where
-        Ident: PartialEq<T>,
-    {
-        self.traits().any(|t| t == &ty)
-    }
-
-    #[must_use]
-    pub fn derives(&self) -> syn::Attribute {
-        let mut traits: Punctuated<Path, Token![,]> = Punctuated::new();
-
-        for (trait_name, path) in Self::DERIVES {
-            if self.has(trait_name) {
-                traits.push(syn::parse_str::<Path>(path).unwrap());
-            }
-        }
-
-        syn::Attribute {
-            pound_token: self._pound_token,
-            style: syn::AttrStyle::Outer,
-            bracket_token: self._bracket_token,
-            path: syn::parse_str("derive").unwrap(),
-            tokens: quote!((#traits)),
-        }
-    }
+enum Definition {
+    Declaration(TypeUnionDeclaration),
+    Impl(ItemImpl),
 }
 
-pub struct TypeUnionDeclaration {
-    impl_attr: Option<ImplAttr>,
-    // attrs: Vec<Attribute>,
-    _enum_token: Token!(enum),
-    ident: Option<Ident>,
-    _paren_token: syn::token::Paren,
-    variants: Punctuated<Type, Token![|]>,
-}
-
-fn parse_type(visited: &mut HashSet<Ident>, input: ParseStream<'_>) -> syn::Result<Type> {
-    let ty = input.parse::<Type>()?;
-    let ident = resolve_type_name(&ty).ok_or_else(|| input.error("could not resolve type name"))?;
-
-    if visited.contains(&ident) {
-        return Err(input.error("duplicate type name"));
-    }
-
-    Ok(ty)
-}
-
-impl Parse for TypeUnionDeclaration {
+impl Parse for Definition {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let mut visited = HashSet::new();
-        let content;
-        Ok(Self {
-            impl_attr: {
-                if input.peek(Token![#]) {
-                    Some(input.parse()?)
-                } else {
-                    None
-                }
-            },
-            _enum_token: input.parse()?,
-            ident: input.parse()?,
-            _paren_token: parenthesized!(content in input),
-            variants: content.parse_terminated2(|input| parse_type(&mut visited, input))?,
-        })
+        if input.peek(Token![impl]) {
+            Ok(Self::Impl(input.parse()?))
+        } else {
+            Ok(Self::Declaration(input.parse()?))
+        }
     }
 }
 
-impl TypeUnionDeclaration {
-    pub fn ident(&self) -> syn::Ident {
-        resolve_type_union_name(self.variants.iter())
-    }
-
-    pub fn variants(&self) -> impl Iterator<Item = (syn::Ident, syn::Type)> + '_ {
-        self.variants
-            .iter()
-            .flat_map(|ty| resolve_type_name(&ty).map(|ident| (ident, ty.clone())))
-    }
-
-    #[must_use]
-    pub fn has_trait<T>(&self, ty: T) -> bool
-    where
-        Ident: PartialEq<T>,
-    {
-        self.impl_attr.as_ref().map_or(false, |i| i.has(ty))
-    }
-}
-
-impl ToTokens for TypeUnionDeclaration {
+impl ToTokens for Definition {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let ident = self.ident();
-
-        let (variant_names, variant_types): (Vec<_>, Vec<_>) = self.variants().unzip();
-
-        let derives = {
-            if let Some(attr) = &self.impl_attr {
-                let d = attr.derives();
-                quote!(#d)
-            } else {
-                quote!()
-            }
-        };
-
-        let optional_partial_eq = {
-            if self.has_trait("PartialEq") {
-                quote! {
-                    #(
-                        impl PartialEq<#variant_types> for #ident {
-                            fn eq(&self, other: &#variant_types) -> bool {
-                                if let Self::#variant_names(value) = self {
-                                    value.eq(other)
-                                } else {
-                                    false
-                                }
-                            }
-                        }
-                    )*
-                }
-            } else {
-                quote!()
-            }
-        };
-
-        tokens.append_all(quote!(
-            #derives
-            #[allow(non_camel_case_types)]
-            pub enum #ident {
-                #(#variant_names(#variant_types)),*
-            }
-
-            #(
-                impl From<#variant_types> for #ident {
-                    fn from(value: #variant_types) -> Self {
-                        Self::#variant_names(value)
-                    }
-                }
-            )*
-
-            #optional_partial_eq
-        ));
+        match self {
+            Self::Declaration(decl) => decl.to_tokens(tokens),
+            Self::Impl(impl_) => impl_.to_tokens(tokens),
+        }
     }
 }
 
 pub struct DefineTypeUnion {
-    punctuated: Punctuated<TypeUnionDeclaration, Token![;]>,
+    punctuated: Punctuated<Definition, Token![;]>,
+}
+
+impl DefineTypeUnion {
+    pub fn declarations(&self) -> impl Iterator<Item = &TypeUnionDeclaration> + '_ {
+        self.punctuated.iter().filter_map(|d| match d {
+            Definition::Declaration(decl) => Some(decl),
+            _ => None,
+        })
+    }
+
+    /// Returns all implementations associated with the given type.
+    pub fn impls_of<'a, 'b, T>(&'a self, sty: &'b T) -> impl Iterator<Item = &'a ItemImpl> + 'a
+    where
+        'b: 'a,
+        Type: PartialEq<T>,
+    {
+        self.punctuated
+            .iter()
+            .filter_map(|d| match d {
+                Definition::Impl(v) => Some(v),
+                _ => None,
+            })
+            .filter(move |&i| {
+                let ty: &Type = &*i.self_ty;
+                ty == sty
+            })
+    }
+
+    pub fn impls(&self) -> impl Iterator<Item = &ItemImpl> + '_ {
+        self.punctuated.iter().filter_map(|d| match d {
+            Definition::Impl(v) => Some(v),
+            _ => None,
+        })
+    }
 }
 
 impl Parse for DefineTypeUnion {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         Ok(Self {
-            punctuated: input.parse_terminated(TypeUnionDeclaration::parse)?,
+            punctuated: input.parse_terminated(Definition::parse)?,
         })
     }
 }
 
+#[must_use]
+fn generate_partial_eq_impl(
+    a: &TypeUnionDeclaration,
+    b: &TypeUnionDeclaration,
+) -> proc_macro2::TokenStream {
+    let mut mapping: Vec<((Ident, Ident), Type)> = Vec::new();
+
+    for (variant, ty) in a.variants() {
+        for (other_variant, other_ty) in b.variants() {
+            if &ty == &other_ty {
+                mapping.push(((variant.clone(), other_variant), ty.clone()));
+            }
+        }
+    }
+
+    if !mapping.is_empty() {
+        let a_ident = a.ident();
+        let b_ident = b.ident();
+
+        let a_variants = mapping.iter().map(|((a, _), _)| a);
+        let b_variants = mapping.iter().map(|((_, b), _)| b);
+
+        return quote! {
+            impl ::core::cmp::PartialEq<#a_ident> for #b_ident {
+                fn eq(&self, other: &#a_ident) -> bool {
+                    use #a_ident as ThisB;
+                    use #b_ident as ThisA;
+
+                    match (self, other) {
+                        #(
+                            (
+                                ThisA::#a_variants (a),
+                                ThisB::#b_variants (b)
+                            ) => {
+                                a.eq(b)
+                            }
+                        )*
+                        _ => false,
+                    }
+                }
+            }
+
+            impl PartialEq<#b_ident> for #a_ident {
+                fn eq(&self, other: &#b_ident) -> bool {
+                    other.eq(self)
+                }
+            }
+        };
+    }
+
+    quote!()
+}
+
 impl ToTokens for DefineTypeUnion {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        for declaration in self.punctuated.iter() {
+        let mut with_partialeqs = Vec::new();
+        for declaration in self.declarations() {
+            if declaration.has_trait("PartialEq") {
+                with_partialeqs.push(declaration);
+            }
+
             tokens.append_all(quote!(
                 #declaration
+            ));
+        }
+
+        for (a, b) in unique_pairs(with_partialeqs) {
+            tokens.append_all(generate_partial_eq_impl(a, b));
+        }
+
+        for impl_ in self.impls() {
+            tokens.append_all(quote!(
+                #impl_
             ));
         }
     }

@@ -48,3 +48,52 @@ pub fn resolve_type_union_name<'a>(variants: impl IntoIterator<Item = &'a Type>)
 
     join_idents(variants.into_iter())
 }
+
+pub fn unique_pairs<T>(values: Vec<T>) -> Vec<(T, T)>
+where
+    T: Clone,
+{
+    let mut result = Vec::new();
+
+    if values.len() <= 1 {
+        return result;
+    }
+
+    for (i, a) in values.iter().enumerate() {
+        for b in values[(i + 1)..].iter() {
+            result.push((a.clone(), b.clone()));
+        }
+    }
+
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_unique_pairs() {
+        assert_eq!(
+            unique_pairs(vec!['a', 'b', 'c', 'd', 'e']),
+            vec![
+                ('a', 'b'),
+                ('a', 'c'),
+                ('a', 'd'),
+                ('a', 'e'),
+                ('b', 'c'),
+                ('b', 'd'),
+                ('b', 'e'),
+                ('c', 'd'),
+                ('c', 'e'),
+                ('d', 'e'),
+            ]
+        );
+
+        assert_eq!(unique_pairs(vec!['a', 'b']), vec![('a', 'b')]);
+        assert_eq!(unique_pairs(vec!['a']), vec![]);
+        assert_eq!(unique_pairs(Vec::<char>::new()), vec![]);
+    }
+}

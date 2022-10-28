@@ -18,14 +18,22 @@ pub fn define_type_union(input: proc_macro::TokenStream) -> proc_macro::TokenStr
 /// This macro expands to the type of the union.
 ///
 /// For example invoke it like this:
-/// ```ignore
-/// fn get_number() -> type_union![u8 | u16 | u64] {
+/// ```
+/// # use type_union_derive as type_union;
+/// use type_union::{define_type_union, type_union};
+///
+/// define_type_union! {
+///     #[impl(Debug, Clone, PartialEq)]
+///     enum (u8 | u16 | u64);
+/// }
+///
+/// fn get_number() -> type_union!(u8 | u16 | u64) {
 ///     42_u64.into()
 /// }
 /// ```
 #[proc_macro]
 pub fn type_union(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let input = parse_macro_input!(input as input::TypeUnionInput);
+    let input = parse_macro_input!(input as input::TypeUnion);
 
     quote!(#input).into()
 }
@@ -33,9 +41,17 @@ pub fn type_union(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// Matches a type union:
 ///
 /// ```
-/// let my_type: type_union![u8 | u16 | u64] = 42_u64.into();
+/// # use type_union_derive as type_union;
+/// use type_union::{define_type_union, type_union, match_type_union};
 ///
-/// match_type_union!(my_type {
+/// define_type_union! {
+///     #[impl(Debug, Clone, PartialEq)]
+///     enum (u8 | u16 | u64);
+/// }
+///
+/// let my_type: type_union!(u8 | u16 | u64) = 42_u64.into();
+///
+/// match_type_union!(my_type: (u8 | u16 | u64) {
 ///     value: u8 => println!("u8: {}", value),
 ///     value: u16 => println!("u16: {}", value),
 ///     value: u64 => println!("u64: {}", value),
