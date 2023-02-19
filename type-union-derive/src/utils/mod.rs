@@ -1,20 +1,30 @@
 use convert_case::{Case, Casing};
 use proc_macro2::Span;
-use quote::quote;
+use syn::spanned::Spanned;
 use syn::{Ident, Type};
 
+mod generator;
 mod syn_ext;
 
+pub use generator::*;
 pub use syn_ext::*;
 
-pub fn assert_ident_is_type(ident: &syn::Ident, ty: &syn::Type) -> syn::Expr {
-    syn::parse2(quote! {
-        {
-            fn _assert_is_ty(v: #ty) -> #ty { v }
-            _assert_is_ty(#ident)
-        }
+#[must_use]
+pub fn is_macro<T>(mac: &syn::Macro, name: T) -> bool
+where
+    syn::Ident: PartialEq<T>,
+{
+    mac.path.segments.len() == 1 && mac.path.segments[0].ident == name
+}
+
+// TODO: test that the span is applied correctly
+
+#[must_use]
+pub fn assert_expr_is_type(expr: &syn::Expr, ty: &syn::Type) -> syn::Expr {
+    syn::parse_quote_spanned!(ty.span() => {
+        fn _assert_is_ty(v: #ty) -> #ty { v }
+        _assert_is_ty(#expr)
     })
-    .expect("macro is broken")
 }
 
 pub fn resolve_type_name(ty: &Type) -> Option<Ident> {
@@ -49,19 +59,25 @@ pub fn resolve_type_union_name<'a>(variants: impl IntoIterator<Item = &'a Type>)
     join_idents(variants.into_iter())
 }
 
-pub fn unique_pairs<T>(values: Vec<T>) -> Vec<(T, T)>
+pub fn unique_product<V, T>(values: V, size: usize) -> Vec<Vec<T>>
 where
     T: Clone,
+    V: AsRef<[T]>,
 {
-    let mut result = Vec::new();
-
-    if values.len() <= 1 {
-        return result;
+    let values = values.as_ref();
+    if size == 0 {
+        return vec![];
+    } else if size == 1 {
+        return values.into_iter().cloned().map(|v| vec![v]).collect();
     }
 
-    for (i, a) in values.iter().enumerate() {
-        for b in values[(i + 1)..].iter() {
-            result.push((a.clone(), b.clone()));
+    let mut result = Vec::new();
+
+    for (index, a) in values.into_iter().enumerate() {
+        for b in unique_product(&values[(index + 1)..], size - 1) {
+            let mut c = vec![a.clone()];
+            c.extend(b);
+            result.push(c);
         }
     }
 
@@ -75,25 +91,56 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn test_unique_pairs() {
+    // TODO: write more tests?
+    fn test_unique_product() {
         assert_eq!(
-            unique_pairs(vec!['a', 'b', 'c', 'd', 'e']),
-            vec![
-                ('a', 'b'),
-                ('a', 'c'),
-                ('a', 'd'),
-                ('a', 'e'),
-                ('b', 'c'),
-                ('b', 'd'),
-                ('b', 'e'),
-                ('c', 'd'),
-                ('c', 'e'),
-                ('d', 'e'),
-            ]
+            unique_product(vec!['a', 'b', 'c'], 2),
+            vec![vec!['a', 'b'], vec!['a', 'c'], vec!['b', 'c']]
         );
 
-        assert_eq!(unique_pairs(vec!['a', 'b']), vec![('a', 'b')]);
-        assert_eq!(unique_pairs(vec!['a']), vec![]);
-        assert_eq!(unique_pairs(Vec::<char>::new()), vec![]);
+        assert_eq!(
+            unique_product(vec!['a', 'b', 'c'], 3),
+            vec![vec!['a', 'b', 'c']]
+        );
+
+        assert_eq!(
+            unique_product(vec!['a', 'b', 'c'], 1),
+            vec![vec!['a'], vec!['b'], vec!['c']]
+        );
+        assert_eq!(unique_product(&['a', 'b', 'c'], 0), Vec::<Vec<char>>::new());
+        assert_eq!(
+            unique_product(&Vec::<char>::new(), 0),
+            Vec::<Vec<char>>::new()
+        );
+
+        assert_eq!(
+            unique_product(["usize", "u8", "u16", "u32"], 2),
+            vec![
+                vec!["usize", "u8"],
+                vec!["usize", "u16"],
+                vec!["usize", "u32"],
+                vec!["u8", "u16"],
+                vec!["u8", "u32"],
+                vec!["u16", "u32"],
+            ]
+        );
+    }
+
+    #[test]
+    fn test_unique_product_against_itertools() {
+        use itertools::Itertools;
+
+        let source = vec!['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'];
+
+        for size in 1..=source.len() {
+            let expected = source
+                .iter()
+                .cloned()
+                .combinations(size)
+                .collect::<Vec<_>>();
+            let actual = unique_product(&source, size);
+
+            assert_eq!(actual, expected);
+        }
     }
 }

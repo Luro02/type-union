@@ -1,6 +1,9 @@
+#![feature(iter_intersperse)]
 extern crate proc_macro;
 
+mod impl_declaration;
 mod input;
+mod meta_union;
 mod utils;
 
 use quote::quote;
@@ -14,6 +17,8 @@ pub fn define_type_union(input: proc_macro::TokenStream) -> proc_macro::TokenStr
 
     quote!(#input).into()
 }
+
+// TODO: rename match_type_union to typed_match?
 
 /// This macro expands to the type of the union.
 ///
@@ -33,7 +38,7 @@ pub fn define_type_union(input: proc_macro::TokenStream) -> proc_macro::TokenStr
 /// ```
 #[proc_macro]
 pub fn type_union(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let input = parse_macro_input!(input as input::TypeUnion);
+    let input = parse_macro_input!(input as input::TypeUnion<syn::Type>);
 
     quote!(#input).into()
 }
@@ -51,7 +56,7 @@ pub fn type_union(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 ///
 /// let my_type: type_union!(u8 | u16 | u64) = 42_u64.into();
 ///
-/// match_type_union!(my_type: (u8 | u16 | u64) {
+/// match_type_union!(my_type: type_union!(u8 | u16 | u64) {
 ///     value: u8 => println!("u8: {}", value),
 ///     value: u16 => println!("u16: {}", value),
 ///     value: u64 => println!("u64: {}", value),
@@ -59,7 +64,7 @@ pub fn type_union(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// ```
 #[proc_macro]
 pub fn match_type_union(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let input = parse_macro_input!(input as input::TypeUnionMatch);
+    let input = parse_macro_input!(input as input::TypeUnionMatch<syn::Type>);
 
     quote!(#input).into()
 }

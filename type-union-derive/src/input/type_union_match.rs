@@ -1,23 +1,52 @@
 use proc_macro2::{Ident, TokenStream};
-use quote::{quote, ToTokens, TokenStreamExt};
+use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::{braced, Expr, Token, Type};
+use syn::spanned::Spanned;
+use syn::{braced, Token};
 
 use crate::input::TypeUnion;
-use crate::utils::assert_ident_is_type;
+use crate::utils::{assert_expr_is_type, is_macro};
 
 #[derive(Debug, Clone)]
-pub struct TypeUnionMatchArm {
+pub struct TypedMatchArm<T> {
     ident: Ident,
-    _colon_token: Token![:],
-    _borrow_token: Option<Token![&]>,
-    ty: Type,
-    _fat_arrow_token: Token![=>],
-    body: Expr,
+    _colon_token: syn::token::Colon,        // :
+    _borrow_token: Option<syn::token::And>, // &
+    pub ty: T,
+    _fat_arrow_token: syn::token::FatArrow, // =>
+    pub body: syn::Expr,
 }
 
-impl Parse for TypeUnionMatchArm {
+impl<T> TypedMatchArm<T> {
+    pub fn map_ty<O, F: FnOnce(T) -> O>(self, f: F) -> TypedMatchArm<O> {
+        TypedMatchArm {
+            ident: self.ident,
+            _colon_token: self._colon_token,
+            _borrow_token: self._borrow_token,
+            ty: f(self.ty),
+            _fat_arrow_token: self._fat_arrow_token,
+            body: self.body,
+        }
+    }
+}
+
+impl<T: ToTokens> TypedMatchArm<T> {
+    pub fn into_macro_tokens(self) -> TokenStream {
+        let mut result = TokenStream::new();
+
+        self.ident.to_tokens(&mut result);
+        self._colon_token.to_tokens(&mut result);
+        self._borrow_token.to_tokens(&mut result);
+        self.ty.to_tokens(&mut result);
+        self._fat_arrow_token.to_tokens(&mut result);
+        self.body.to_tokens(&mut result);
+
+        result
+    }
+}
+
+impl<T: Parse> Parse for TypedMatchArm<T> {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         Ok(Self {
             ident: input.parse()?,
@@ -30,21 +59,28 @@ impl Parse for TypeUnionMatchArm {
     }
 }
 
-impl ToTokens for TypeUnionMatchArm {
+impl ToTokens for TypedMatchArm<syn::Type> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let ident = &self.ident;
         let ty = &self.ty;
         let body = &self.body;
 
-        let assertion = assert_ident_is_type(ident, &{
-            if self._borrow_token.is_some() {
-                Type::Reference(syn::parse2(quote!(&#ty)).unwrap())
-            } else {
-                ty.clone()
-            }
-        });
+        let assertion = assert_expr_is_type(
+            &syn::Expr::Path(syn::ExprPath {
+                attrs: vec![],
+                qself: None,
+                path: syn::Path::from(ident.clone()),
+            }),
+            &{
+                if self._borrow_token.is_some() {
+                    syn::Type::Reference(syn::parse_quote!(& #ty))
+                } else {
+                    ty.clone()
+                }
+            },
+        );
 
-        tokens.append_all(quote! {
+        tokens.append_all(quote_spanned! { body.span() =>
             This :: #ty ( #ident ) => {
                 let #ident = #assertion;
                 #body
@@ -53,58 +89,98 @@ impl ToTokens for TypeUnionMatchArm {
     }
 }
 
-pub struct TypeUnionMatch {
-    ident: Ident,
-    _colon_token: Token![:],
-    _borrow_token: Option<Token![&]>,
-    type_union: TypeUnion,
-    _brace_token: syn::token::Brace,
-    arms: Punctuated<TypeUnionMatchArm, Token![,]>,
+pub struct TypeUnionMatch<T> {
+    pub expr_ty: syn::ExprType,
+    _brace_token: syn::token::Brace, // {}
+    pub arms: Punctuated<TypedMatchArm<T>, Token![,]>,
 }
 
-impl Parse for TypeUnionMatch {
+impl<T> TypeUnionMatch<T> {
+    pub fn new(expr_ty: syn::ExprType) -> Self {
+        Self {
+            expr_ty,
+            _brace_token: syn::token::Brace::default(),
+            arms: Punctuated::new(),
+        }
+    }
+
+    fn resolve_type(ty: &syn::Type) -> syn::Result<syn::Type> {
+        if let syn::Type::Macro(syn::TypeMacro { mac }) = ty {
+            if is_macro(&mac, "type_union") {
+                return Ok(mac.parse_body::<TypeUnion<syn::Type>>()?.to_type());
+            }
+        } else if let syn::Type::Reference(syn::TypeReference { elem, .. }) = ty {
+            return Self::resolve_type(elem.as_ref());
+        }
+
+        Err(syn::Error::new_spanned(ty, "unsupported type"))
+    }
+}
+
+impl<T: ToTokens> TypeUnionMatch<T> {
+    #[must_use]
+    pub fn into_macro_tokens(self) -> TokenStream {
+        let mut result = TokenStream::new();
+        result.append_all(self.expr_ty.into_token_stream());
+        self._brace_token.surround(&mut result, |result| {
+            for pair in self.arms.into_pairs() {
+                match pair {
+                    syn::punctuated::Pair::Punctuated(arm, punct) => {
+                        result.append_all(arm.into_macro_tokens());
+                        punct.to_tokens(result);
+                    }
+                    syn::punctuated::Pair::End(arm) => {
+                        result.append_all(arm.into_macro_tokens());
+                    }
+                }
+            }
+        });
+
+        result
+    }
+}
+
+impl<T> Parse for TypeUnionMatch<T>
+where
+    TypedMatchArm<T>: Parse,
+{
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let content;
         Ok(Self {
-            ident: input.parse()?,
-            _colon_token: input.parse()?,
-            _borrow_token: input.parse()?,
-            type_union: {
-                let result: TypeUnion = input.parse()?;
-                // ensure that the TypeUnion is wrapped in `()`
-                result.has_parens_or_err()?;
-                result
-            },
+            expr_ty: input.parse()?,
             _brace_token: braced!(content in input),
-            arms: content.parse_terminated(TypeUnionMatchArm::parse)?,
+            arms: content.parse_terminated(TypedMatchArm::parse)?,
         })
     }
 }
 
-impl ToTokens for TypeUnionMatch {
+impl ToTokens for TypeUnionMatch<syn::Type> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let ident = &self.ident;
+        let expr = &self.expr_ty.expr;
+        let ty = &self.expr_ty.ty;
+        let resolved_ty = Self::resolve_type(self.expr_ty.ty.as_ref());
+        let Ok(resolved_ty) = resolved_ty else {
+            tokens.append_all(resolved_ty.unwrap_err().into_compile_error());
+            return;
+        };
+
+        let assertion = assert_expr_is_type(&expr, &ty);
         let arms = self.arms.iter();
 
-        let real_type = self.type_union.ident();
-        let ty_path = Type::Path(syn::parse2(quote!(#real_type)).unwrap());
-        let assertion = assert_ident_is_type(ident, &{
-            if self._borrow_token.is_some() {
-                Type::Reference(syn::parse2(quote!(&#ty_path)).unwrap())
-            } else {
-                ty_path
-            }
-        });
-
-        tokens.append_all(quote! {
+        // TODO: a problem occurs when the expr is self
+        let result = quote! {
             {
-                let #ident = #assertion;
+                let #expr = #assertion;
 
-                use #real_type as This;
-                match #ident {
+                use #resolved_ty as This;
+
+                match #expr {
                     #(#arms),*
                 }
             }
-        });
+        };
+
+        // TODO: can (u64 | u32) be parsed as a TypeGroup?
+        tokens.append_all(result);
     }
 }
