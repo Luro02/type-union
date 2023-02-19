@@ -49,7 +49,7 @@ pub fn join_idents(idents: impl Iterator<Item = Ident>) -> syn::Ident {
 pub fn resolve_type_union_name<'a>(variants: impl IntoIterator<Item = &'a Type>) -> syn::Ident {
     let mut variants = variants
         .into_iter()
-        .flat_map(|ty| resolve_type_name(&ty))
+        .flat_map(resolve_type_name)
         .collect::<Vec<_>>();
 
     // TODO: assert no duplicates?
@@ -68,12 +68,12 @@ where
     if size == 0 {
         return vec![];
     } else if size == 1 {
-        return values.into_iter().cloned().map(|v| vec![v]).collect();
+        return values.iter().cloned().map(|v| vec![v]).collect();
     }
 
     let mut result = Vec::new();
 
-    for (index, a) in values.into_iter().enumerate() {
+    for (index, a) in values.iter().enumerate() {
         for b in unique_product(&values[(index + 1)..], size - 1) {
             let mut c = vec![a.clone()];
             c.extend(b);

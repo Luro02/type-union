@@ -44,14 +44,14 @@ fn debug_set<T: ToTokens>(set: IndexSet<T>) -> IndexSet<T> {
     eprint!("[");
     let mut iter = set.iter();
     if let Some(first) = iter.next() {
-        eprint!("`{}`", first.into_token_stream().to_string());
+        eprint!("`{}`", first.into_token_stream());
     }
 
     for item in iter {
-        eprint!(", `{}`", item.into_token_stream().to_string());
+        eprint!(", `{}`", item.into_token_stream());
     }
 
-    eprint!("]\n");
+    eprintln!("]");
     set
 }
 

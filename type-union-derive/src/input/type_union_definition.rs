@@ -27,7 +27,7 @@ impl TypeUnionDefinition {
     fn variants(&self) -> impl Iterator<Item = (syn::Ident, syn::Type)> + '_ {
         self.type_union
             .iter_types()
-            .flat_map(|ty| resolve_type_name(&ty).map(|ident| (ident, ty.clone())))
+            .flat_map(|ty| resolve_type_name(ty).map(|ident| (ident, ty.clone())))
     }
 
     pub fn type_union(&self) -> &TypeUnion<syn::Type> {

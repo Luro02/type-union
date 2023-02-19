@@ -1,3 +1,5 @@
+#![allow(clippy::uninlined_format_args, clippy::module_inception)]
+
 pub use type_union_derive::*;
 
 define_type_union! {

@@ -25,7 +25,7 @@ impl TryFrom<TypeUnionDefinition> for MetaTypeUnion {
         }
 
         Ok(Self {
-            name: syn::Ident::new(&format!("TypeUnion{}", width), Span::call_site()),
+            name: syn::Ident::new(&format!("TypeUnion{width}"), Span::call_site()),
             declaration,
         })
     }

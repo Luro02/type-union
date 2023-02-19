@@ -107,7 +107,7 @@ impl TypeSolver {
                             declaration,
                             format!(
                                 "expected declaration to have `{}`",
-                                ty.to_token_stream().to_string()
+                                ty.to_token_stream()
                             ),
                         ));
                     }
@@ -184,7 +184,7 @@ impl TypeSolver {
                         decl_path,
                         format!(
                             "expected type to be '{}'",
-                            templ_path.into_token_stream().to_string()
+                            templ_path.into_token_stream()
                         ),
                     ));
                 }

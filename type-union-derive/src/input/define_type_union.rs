@@ -79,7 +79,7 @@ impl ToTokens for DefineTypeUnion {
 
             // TODO: duplicate code between the two loops!
             for decl in self.declarations() {
-                if !decl.impl_attr().has_trait(&trait_impl.trait_path()) {
+                if !decl.impl_attr().has_trait(trait_impl.trait_path()) {
                     continue;
                 }
 
@@ -95,7 +95,7 @@ impl ToTokens for DefineTypeUnion {
 
         for trait_impl in self.impls() {
             for decl in self.declarations() {
-                if !decl.impl_attr().has_trait(&trait_impl.trait_path()) {
+                if !decl.impl_attr().has_trait(trait_impl.trait_path()) {
                     continue;
                 }
 

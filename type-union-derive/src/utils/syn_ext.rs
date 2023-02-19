@@ -41,8 +41,8 @@ pub trait PunctuatedExt<T, P> {
 }
 
 impl<T, P: Default> PunctuatedExt<T, P> for Punctuated<T, P> {
-    fn map<R, F: FnMut(T) -> R>(self, mut f: F) -> Punctuated<R, P> {
-        self.into_iter().map(|t| f(t)).collect()
+    fn map<R, F: FnMut(T) -> R>(self, f: F) -> Punctuated<R, P> {
+        self.into_iter().map(f).collect()
     }
 
     fn filter<F>(self, predicate: F) -> Punctuated<T, P>

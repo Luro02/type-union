@@ -91,9 +91,9 @@ impl Template {
 
     /// Returns the name of the trait that is implemented.
     pub fn trait_path(&self) -> &syn::Path {
-        let path = &self.trait_.1;
+        
 
-        path
+        &self.trait_.1 as _
     }
 
     fn try_apply_args(

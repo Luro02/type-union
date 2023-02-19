@@ -37,7 +37,7 @@ impl<'a> Fold for Folder<'a> {
     }
 
     fn fold_macro(&mut self, mac: syn::Macro) -> syn::Macro {
-        let mut mac = mac.clone();
+        let mut mac = mac;
 
         if is_macro(&mac, "type_union") {
             if let Ok(type_union) = TypeUnion::parse_macro(&mac) {
@@ -85,7 +85,7 @@ impl<'a> Fold for Folder<'a> {
                             result.arms.push(arm.clone().map_ty(|_| ty));
                         }
                         EitherType::Wildcard(ty) => {
-                            if let Some(possible_types) = self.type_mapping.get_variadic(&ty) {
+                            if let Some(possible_types) = self.type_mapping.get_variadic(ty) {
                                 for concrete_ty in possible_types {
                                     result
                                         .arms

@@ -97,7 +97,7 @@ impl ImplAttr {
                                 let is_right_macro = matches!(rty, syn::Type::Macro(_));
                                 // TODO: improve, expand
                                 if is_left_macro {
-                                    return is_right_macro;
+                                    is_right_macro
                                 } else if is_right_macro {
                                     return false;
                                 } else {

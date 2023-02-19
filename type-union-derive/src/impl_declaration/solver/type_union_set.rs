@@ -71,8 +71,8 @@ impl TypeUnionSet {
         left: TypeSet,
         right: TypeSet,
     ) -> (TypeSet, TypeSet) {
-        let mut updated_left_types = left.base_types;
-        let mut updated_right_types = right.base_types;
+        let updated_left_types = left.base_types;
+        let updated_right_types = right.base_types;
 
         let mut updated_left_values = left.values;
         let mut updated_right_values = right.values;
@@ -116,7 +116,7 @@ impl TypeUnionSet {
                     })
                     .collect::<IndexSet<_>>();
 
-                updated_left_values = InferredValue::Any(new_values.clone());
+                updated_left_values = InferredValue::Any(new_values);
                 updated_right_values = updated_left_values.clone();
             }
             // both sets have a list of possible sets, so the intersection is the new set
@@ -307,7 +307,7 @@ impl TypeUnionSet {
             if !was_possible {
                 return Err(syn::Error::new_spanned(
                     ty,
-                    format!("type is not possible for the generic `{}`", generic),
+                    format!("type is not possible for the generic `{generic}`"),
                 ));
             }
         }
@@ -336,7 +336,7 @@ impl TypeUnionSet {
                 if !types.contains(ty) {
                     return Err(syn::Error::new_spanned(
                         ty,
-                        format!("type is not possible for the variadic `{}`", variadic),
+                        format!("type is not possible for the variadic `{variadic}`"),
                     ));
                 }
             }
@@ -358,7 +358,7 @@ impl TypeUnionSet {
                 &next_unknown,
                 format!(
                     "cannot have more than one unknown variadic: `{}`",
-                    (&next_unknown).into_token_stream().to_string()
+                    (&next_unknown).into_token_stream()
                 ),
             )
             .with_spans(iter));

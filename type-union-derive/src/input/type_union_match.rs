@@ -106,7 +106,7 @@ impl<T> TypeUnionMatch<T> {
 
     fn resolve_type(ty: &syn::Type) -> syn::Result<syn::Type> {
         if let syn::Type::Macro(syn::TypeMacro { mac }) = ty {
-            if is_macro(&mac, "type_union") {
+            if is_macro(mac, "type_union") {
                 return Ok(mac.parse_body::<TypeUnion<syn::Type>>()?.to_type());
             }
         } else if let syn::Type::Reference(syn::TypeReference { elem, .. }) = ty {
@@ -164,7 +164,7 @@ impl ToTokens for TypeUnionMatch<syn::Type> {
             return;
         };
 
-        let assertion = assert_expr_is_type(&expr, &ty);
+        let assertion = assert_expr_is_type(expr, ty);
         let arms = self.arms.iter();
 
         // TODO: a problem occurs when the expr is self

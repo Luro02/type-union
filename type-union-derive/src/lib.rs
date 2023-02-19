@@ -1,4 +1,6 @@
 #![feature(iter_intersperse)]
+#![allow(clippy::uninlined_format_args, clippy::module_inception)]
+
 extern crate proc_macro;
 
 mod impl_declaration;
