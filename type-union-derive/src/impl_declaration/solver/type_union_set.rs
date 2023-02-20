@@ -3,7 +3,6 @@ use std::hash::Hash;
 use indexmap::indexset;
 use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
-use quote::ToTokens;
 
 use super::{SetId, UnresolvedTypeMapping};
 use crate::impl_declaration::solver::InferredValue;
@@ -42,9 +41,15 @@ where
 }
 
 #[derive(Debug, Clone)]
-struct TypeSet {
+struct InferenceArgument<V> {
     base_types: IndexSet<syn::Type>,
-    values: InferredValue<SetId>,
+    value: InferredValue<V>,
+}
+
+impl<V> InferenceArgument<V> {
+    pub fn new(base_types: IndexSet<syn::Type>, value: InferredValue<V>) -> Self {
+        Self { base_types, value }
+    }
 }
 
 impl TypeUnionSet {
@@ -66,35 +71,58 @@ impl TypeUnionSet {
         }
     }
 
+    pub fn base_types<S: SetCollection>(&self, set_collection: S) -> IndexSet<syn::Type> {
+        let mut set = set_collection.get_set(&self.set).clone();
+        for value in self.generic_types.values() {
+            if let InferredValue::Fixed(value) = value {
+                set.remove(value);
+            }
+        }
+
+        for values in self.variadics.values() {
+            if let InferredValue::Fixed(value) = values {
+                for ty in set_collection.get_set(value) {
+                    set.remove(ty);
+                }
+            }
+        }
+
+        set
+    }
+
     fn update_variadic_inference<S: SetCollection>(
         mut set_collection: S,
-        left: TypeSet,
-        right: TypeSet,
-    ) -> (TypeSet, TypeSet) {
-        let updated_left_types = left.base_types;
-        let updated_right_types = right.base_types;
-
-        let mut updated_left_values = left.values;
-        let mut updated_right_values = right.values;
-
-        match (updated_left_values.clone(), updated_right_values.clone()) {
+        mut left: InferenceArgument<SetId>,
+        mut right: InferenceArgument<SetId>,
+    ) -> (InferenceArgument<SetId>, InferenceArgument<SetId>) {
+        // TODO: the modification of the base type is questionable
+        // TODO: right.value = left.value.clone() is used after every match arm, so maybe move it to the end of the function?
+        match (left.value.clone(), right.value.clone()) {
+            // if either is invalid, then both are invalid
+            (InferredValue::Invalid, _) | (_, InferredValue::Invalid) => {
+                left.value = InferredValue::Invalid;
+                right.value = InferredValue::Invalid;
+            }
             // the other type union knows exactly what type the variadic must have, now both know it:
             (InferredValue::Fixed(set), _) | (_, InferredValue::Fixed(set)) => {
-                updated_left_values = InferredValue::Fixed(set);
-                updated_right_values = updated_left_values.clone();
+                left.value = InferredValue::Fixed(set);
+                right.value = left.value.clone();
 
-                // TODO: the inferred type is fixed, so they have to removed from the base types?
+                // the variadic is now fixed, so remove the types from the base types
+                let fixed_set = set_collection.get_set(&set);
+
+                left.base_types.retain(|ty| !fixed_set.contains(ty));
+                right.base_types.retain(|ty| !fixed_set.contains(ty));
             }
             // the other type union knows more about the variadic, so update both:
             (InferredValue::Any(values), InferredValue::Unknown)
             | (InferredValue::Unknown, InferredValue::Any(values)) => {
-                // TODO: this is not correct, all known values from self must be removed from this set
                 let other_values = {
-                    if matches!(updated_right_values, InferredValue::Unknown) {
-                        updated_right_types.clone()
+                    if matches!(right.value, InferredValue::Unknown) {
+                        right.base_types.clone()
                     } else {
-                        debug_assert!(matches!(updated_left_values, InferredValue::Unknown));
-                        updated_left_types.clone()
+                        debug_assert!(matches!(left.value, InferredValue::Unknown));
+                        left.base_types.clone()
                     }
                 };
 
@@ -116,22 +144,25 @@ impl TypeUnionSet {
                     })
                     .collect::<IndexSet<_>>();
 
-                updated_left_values = InferredValue::Any(new_values);
-                updated_right_values = updated_left_values.clone();
+                left.value = InferredValue::from_possible_values(new_values);
+                right.value = left.value.clone();
             }
             // both sets have a list of possible sets, so the intersection is the new set
             (InferredValue::Any(mut left_values), InferredValue::Any(right_values)) => {
                 // only keep the values that are present in both sets
                 left_values.retain(|v| right_values.contains(v));
 
-                // TODO: it might happen that the intersection is empty!
-
+                // TODO: use InferredValue::from_possible_values
                 if left_values.len() == 1 {
                     let set = left_values.into_iter().next().unwrap();
-                    updated_left_values = InferredValue::Fixed(set);
+                    left.value = InferredValue::Fixed(set);
+                    // the variadic is now fixed, so remove the types from the base types:
+                    let fixed_set = set_collection.get_set(&set);
+
+                    left.base_types.retain(|ty| !fixed_set.contains(ty));
                 }
 
-                updated_right_values = updated_left_values.clone();
+                right.value = left.value.clone();
             }
             (InferredValue::Unknown, InferredValue::Unknown) => {
                 let mut new_values = IndexSet::new();
@@ -143,111 +174,171 @@ impl TypeUnionSet {
                 // obviously the variadic must consist of the intersection:
 
                 // TODO: deal with very large intersections, powerset will be 2^n-1 elements!
-                let intersection = updated_left_types.intersection(&updated_right_types);
+                let intersection = left.base_types.intersection(&right.base_types);
+
+                // TODO: maybe eliminate impossible combinations?
 
                 for set in iter_subsets(intersection.cloned()) {
                     let set_id = set_collection.add_set(set);
                     new_values.insert(set_id);
                 }
 
+                // TODO: use InferredValue::from_possible_values
                 if new_values.len() == 1 {
                     let set = new_values.iter().next().unwrap();
-                    updated_left_values = InferredValue::Fixed(*set);
+                    left.value = InferredValue::Fixed(*set);
+
+                    // the variadic is now fixed, so remove the types from the base types:
+                    let fixed_set = set_collection.get_set(&set);
+
+                    left.base_types.retain(|ty| !fixed_set.contains(ty));
                 } else {
-                    updated_left_values = InferredValue::Any(new_values);
+                    left.value = InferredValue::from_possible_values(new_values);
                 }
 
-                updated_right_values = updated_left_values.clone();
+                right.value = left.value.clone();
             }
         }
 
-        (
-            TypeSet {
-                base_types: updated_left_types,
-                values: updated_left_values,
-            },
-            TypeSet {
-                base_types: updated_right_types,
-                values: updated_right_values,
-            },
-        )
+        (left, right)
+    }
+
+    fn update_generic_inference(
+        mut left: InferenceArgument<syn::Type>,
+        mut right: InferenceArgument<syn::Type>,
+    ) -> (InferenceArgument<syn::Type>, InferenceArgument<syn::Type>) {
+        match (left.value.clone(), right.value.clone()) {
+            (InferredValue::Invalid, _) | (_, InferredValue::Invalid) => {
+                left.value = InferredValue::Invalid;
+                right.value = InferredValue::Invalid;
+            }
+            // one of the types is fixed, so the other must be fixed as well:
+            (InferredValue::Fixed(value), _) | (_, InferredValue::Fixed(value)) => {
+                left.value = InferredValue::Fixed(value);
+                right.value = left.value.clone();
+            }
+            (InferredValue::Any(value), InferredValue::Unknown)
+            | (InferredValue::Unknown, InferredValue::Any(value)) => {
+                // one of the types is unknown, so it must be one of the base types:
+                let other_types = {
+                    if matches!(right.value, InferredValue::Unknown) {
+                        &right.base_types
+                    } else {
+                        debug_assert!(matches!(left.value, InferredValue::Unknown));
+                        &left.base_types
+                    }
+                };
+
+                // the possible types must be the intersection:
+                let intersection = value.intersection(other_types).cloned().collect();
+
+                left.value = InferredValue::from_possible_values(intersection);
+                right.value = left.value.clone();
+            }
+            (InferredValue::Any(mut left_values), InferredValue::Any(right_values)) => {
+                // only keep the intersection:
+                left_values.retain(|v| right_values.contains(v));
+
+                left.value = InferredValue::from_possible_values(left_values);
+                right.value = left.value.clone();
+            }
+            (InferredValue::Unknown, InferredValue::Unknown) => {
+                let mut values = left.base_types.clone();
+
+                values.retain(|v| right.base_types.contains(v));
+
+                left.value = InferredValue::from_possible_values(values);
+                right.value = left.value.clone();
+            }
+        }
+
+        // if the generic is fixed, remove the its type from the base types:
+        if let InferredValue::Fixed(value) = &left.value {
+            // TODO: invalidate types if they are not in the base_types
+            left.base_types.remove(value);
+        }
+
+        if let InferredValue::Fixed(value) = &right.value {
+            right.base_types.remove(value);
+        }
+
+        todo!()
     }
 
     pub fn update_with<S>(&mut self, mut set_collection: S, others: &mut [Self])
     where
         S: SetCollection,
     {
-        for (generic_type, values) in self
-            .generic_types
-            .iter_mut()
-            .filter(|(_, v)| v.is_unknown())
-        {
-            let mut updated_value = values.clone();
+        // TODO: remove this extra variable
+        let immutable_base_types = set_collection.get_set(&self.set).clone();
+        let mut self_base_types = self.base_types(&mut set_collection);
+        for (generic_type, value) in self.generic_types.iter_mut() {
+            let mut updated_value = value.take();
 
-            for other in others.iter_mut() {
-                let inferred_value = other.generic_types.get(generic_type);
+            for other_union in others.iter_mut() {
+                let other_base_types = other_union.base_types(&mut set_collection);
+                let Some(inferred_value) = other_union.generic_types.get_mut(generic_type) else {
+                    // the other union does not have this generic => continue
+                    continue;
+                };
 
-                // TODO: should others be updated as well if self knows more?
-                match (inferred_value, &mut updated_value) {
-                    (Some(InferredValue::Fixed(value)), updated_value) => {
-                        *updated_value = InferredValue::Fixed(value.clone());
-                        break;
-                    }
-                    (Some(InferredValue::Any(values)), InferredValue::Unknown) => {
-                        updated_value = InferredValue::Any(values.clone());
-                    }
-                    (Some(InferredValue::Any(values)), InferredValue::Any(updated_values)) => {
-                        // only keep the values that are present in both sets
-                        updated_values.retain(|v| values.contains(v));
-                    }
-                    (_, _) => {}
-                }
+                let left = InferenceArgument::new(self_base_types, updated_value);
+                let right = InferenceArgument::new(other_base_types, inferred_value.clone());
+
+                let (left, right) = Self::update_generic_inference(left, right);
+
+                updated_value = left.value;
+                *inferred_value = right.value;
+
+                self_base_types = left.base_types;
             }
 
-            *values = updated_value;
+            *value = updated_value;
         }
 
-        // TODO: figure out conditions when the value of a variadic can be inferred
-        // TODO: the test that fails has the following ambiguity:
-        // for the current test case there is a unique solution, but for larger unions
-        // the type might belong to either ..A or ..B and ..C
-        //
-        // one may solve this by greedily taking the variadics?
-        //
-        // For example (..A | ..B) & (..A | ..C) = (u8 | u16 | u32) & (u8 | u16 | u32)
-        // here ..A could be either (u8 | u16) or (u8)
-        //
-        // How could one infer that?:
-        // Iterate through all variadics in the first set,
-        // then check in the other set if the variadic is present as well
-        //
-        // if that is the case, then the variadic can only consist of the intersection
+        let self_number_of_variadics = self.variadics.len();
         for (variadic, values) in self.variadics.iter_mut() {
             let mut updated_value = values.take();
 
             for other_union in others.iter_mut() {
-                let other_union_set = other_union.set;
+                let other_base_types = other_union.base_types(&mut set_collection);
                 let Some(other_values) = other_union.get_variadic_mut(variadic) else {
                     // the other union does not have this variadic => continue
                     continue;
                 };
 
-                let left = TypeSet {
-                    base_types: set_collection.get_set(&self.set).clone(),
-                    values: updated_value.take(),
-                };
-                let right = TypeSet {
-                    base_types: set_collection.get_set(&other_union_set).clone(),
-                    values: other_values.take(),
-                };
+                let left = InferenceArgument::new(self_base_types.clone(), updated_value.take());
+                let right = InferenceArgument::new(other_base_types, other_values.take());
 
-                let (left, right) =
+                let (mut left, mut right) =
                     Self::update_variadic_inference(&mut set_collection, left, right);
 
-                updated_value = left.values;
-                *other_values = right.values;
+                if let InferredValue::Any(values) = left.value {
+                    let mut new_values = values.clone();
+                    // eliminate sets, where
+                    // - len(variadic) == 0,
+                    // - generic needs to be more than one type at once (e.g. (T) for (u16 | u8))
+                    // - generic is not used
+                    for set_id in values {
+                        let configuration = set_collection.get_set(&set_id);
+                        let number_of_generics = self.generic_types.len();
 
-                // TODO: update set ids as well if they changed
+                        // assume at least one type per variadic:
+                        if configuration.len() + number_of_generics + (self_number_of_variadics - 1)
+                            > immutable_base_types.len()
+                        {
+                            new_values.remove(&set_id);
+                        }
+                    }
+
+                    left.value = InferredValue::from_possible_values(new_values);
+                    right.value = left.value.clone();
+                }
+
+                updated_value = left.value;
+                *other_values = right.value;
+
+                self_base_types = left.base_types;
             }
 
             *values = updated_value;
@@ -290,42 +381,44 @@ impl TypeUnionSet {
         let mut types = f(self.set);
         let mut generic_types = self.generic_types.clone();
 
-        let mut unknown_generics = IndexSet::new();
-        for (generic, ty) in &self.generic_types {
-            // TODO: deal with any generics!
+        let mut unknown_generics = Vec::new();
+        for (generic, ty) in self.generic_types.clone() {
             let InferredValue::Fixed(ty) = ty else {
-                unknown_generics.insert(generic.clone());
+                let mut values = None;
+                if let InferredValue::Any(possible_values) = ty {
+                    values = Some(possible_values);
+                }
+
+                // TODO: error for InferredValue::Invalid?
+
+                unknown_generics.push((generic, values));
                 continue;
             };
 
-            type_mapping.add_generic_type(generic.clone(), indexset! { ty.clone() });
-
             // the generic has been resolved, so remove it:
-            generic_types.remove(generic);
+            generic_types.remove(&generic);
+
             // no duplicates allowed, so remove the type from the set of possible types:
-            let was_possible = types.remove(ty);
+            let was_possible = types.remove(&ty);
             if !was_possible {
                 return Err(syn::Error::new_spanned(
                     ty,
                     format!("type is not possible for the generic `{generic}`"),
                 ));
             }
+
+            // update the type mapping:
+            type_mapping.add_generic_type(generic, indexset! { ty });
         }
 
-        for generic in unknown_generics {
-            type_mapping.add_generic_type(generic, types.clone());
+        for (generic, values) in unknown_generics {
+            type_mapping.add_generic_type(generic, values.unwrap_or_else(|| types.clone()));
         }
 
         let mut unknown_variadics = IndexSet::new();
         for (variadic, values) in self.variadics.clone() {
             // TODO: deal with any variadics?
             let InferredValue::Fixed(values) = values else {
-                if let InferredValue::Any(values) = &values {
-                    let vs = values.into_iter().map(|v| (*v, f(*v))).collect::<Vec<_>>();
-                    dbg!((&variadic, &vs));
-                } else {
-                    dbg!((&variadic, &values));
-                }
                 unknown_variadics.insert(variadic);
                 continue;
             };
@@ -347,7 +440,6 @@ impl TypeUnionSet {
             type_mapping.add_variadic_type(variadic, tys);
         }
 
-        dbg!(&unknown_variadics);
         let mut iter = unknown_variadics.into_iter();
         if let Some(variadic) = iter.next() {
             type_mapping.add_variadic_type(variadic, types.clone());
@@ -358,7 +450,7 @@ impl TypeUnionSet {
                 &next_unknown,
                 format!(
                     "cannot have more than one unknown variadic: `{}`",
-                    (&next_unknown).into_token_stream()
+                    &next_unknown
                 ),
             )
             .with_spans(iter));
@@ -374,8 +466,28 @@ mod tests {
 
     use pretty_assertions::assert_eq;
 
+    #[derive(Debug, Clone, Default)]
+    struct SetController {
+        sets: Vec<IndexSet<syn::Type>>,
+    }
+
+    impl SetCollection for SetController {
+        fn get_set(&self, set_id: &SetId) -> &IndexSet<syn::Type> {
+            &self.sets[set_id.id]
+        }
+
+        fn add_set(&mut self, set: IndexSet<syn::Type>) -> SetId {
+            let id = self.sets.len();
+            self.sets.push(set);
+            SetId { id }
+        }
+    }
+
     #[test]
     fn test_type_union_set() {
+        let mut collection = SetController::default();
+
+        collection.add_set(indexset! { syn::parse_quote!(u8), syn::parse_quote!(u16) });
         let set_id = SetId { id: 0 };
 
         let mut type_union_set = TypeUnionSet::new(

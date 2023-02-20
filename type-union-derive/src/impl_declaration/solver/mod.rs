@@ -12,10 +12,25 @@ pub use unresolved_type_mapping::*;
 
 use indexmap::{IndexMap, IndexSet};
 use std::hash::Hash;
+use std::ops::{Add, AddAssign};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct SetId {
     id: usize,
+}
+
+impl Add<usize> for SetId {
+    type Output = Self;
+
+    fn add(self, rhs: usize) -> Self::Output {
+        Self { id: self.id + rhs }
+    }
+}
+
+impl AddAssign<usize> for SetId {
+    fn add_assign(&mut self, rhs: usize) {
+        *self = *self + rhs;
+    }
 }
 
 pub trait IndexMapExt<K, V> {

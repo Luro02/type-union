@@ -6,14 +6,8 @@ use crate::impl_declaration::{EitherType, GenericType, Generics, WildcardParam};
 use crate::input::TypeUnion;
 use crate::utils::is_macro;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TypeId {
-    id: usize,
-}
-
 #[derive(Debug, Clone)]
 pub struct TypeSolver {
-    types: IndexMap<TypeId, syn::Type>,
     sets: IndexMap<SetId, IndexSet<syn::Type>>,
     next_set_id: usize,
     generics: Generics,
@@ -65,7 +59,6 @@ impl SetCollection for TypeSolver {
 impl TypeSolver {
     pub fn new(generics: Generics) -> Self {
         Self {
-            types: IndexMap::new(),
             sets: IndexMap::new(),
             next_set_id: 0,
             generics,
@@ -105,20 +98,15 @@ impl TypeSolver {
                         // error type not found in declaration, but required in template
                         return Err(syn::Error::new_spanned(
                             declaration,
-                            format!(
-                                "expected declaration to have `{}`",
-                                ty.to_token_stream()
-                            ),
+                            format!("expected declaration to have `{}`", ty.to_token_stream()),
                         ));
                     }
                 }
                 EitherType::Generic(generic) => {
-                    // TODO: error for duplicates?
-                    generics.insert(generic);
+                    generics.insert(generic.clone());
                 }
-                EitherType::Wildcard(wildcard) => {
-                    // TODO: error for duplicates?
-                    variadics.insert(wildcard);
+                EitherType::Wildcard(variadic) => {
+                    variadics.insert(variadic.clone());
                 }
             }
         }
@@ -182,10 +170,7 @@ impl TypeSolver {
                 } else if templ_path != decl_path {
                     return Err(syn::Error::new_spanned(
                         decl_path,
-                        format!(
-                            "expected type to be '{}'",
-                            templ_path.into_token_stream()
-                        ),
+                        format!("expected type to be '{}'", templ_path.into_token_stream()),
                     ));
                 }
             }
@@ -513,8 +498,6 @@ mod tests {
         // impl<..A, ..B, ..C> ::core::cmp::PartialEq<(..A | ..C)> for (..A | ..B) { ... }
         let mut solver = TypeSolver::new(Generics::new(Default::default()));
 
-        // TODO: is this implementation correct? does it make sense?
-
         solver
             .add_union_constraint(&syn::parse_quote!(..A | ..B), &syn::parse_quote!(u8 | u16))
             .unwrap();
@@ -526,6 +509,34 @@ mod tests {
             )
             .unwrap();
 
+        // this configuration is not possible, because for
+        // (..A | ..B) = (u8 | u16)
+        // (..A | ..C) = (u8 | u16 | String)
+        // (..A) could be either (u8) or (u16)
+
+        let error = solver.solve().expect_err("should fail");
+
+        // TODO: add dedicated error message for an ambiguous variadic?
+        assert_eq!(
+            &error.to_string(),
+            "cannot have more than one unknown variadic: `..B`"
+        );
+
+        // impl<..A, ..B, ..C> ::core::cmp::PartialEq<(..A | ..C)> for (..A | ..B) { ... }
+        let mut solver = TypeSolver::new(Generics::new(Default::default()));
+
+        solver
+            .add_union_constraint(&syn::parse_quote!(..A | ..B), &syn::parse_quote!(u8 | u16))
+            .unwrap();
+
+        solver
+            .add_union_constraint(
+                &syn::parse_quote!(..A | ..C),
+                &syn::parse_quote!(u8 | usize | String),
+            )
+            .unwrap();
+
+        // the difference in this test is that ..A can only be u8
         assert_eq!(
             solver.solve().unwrap(),
             vec![type_mapping! {
@@ -538,11 +549,11 @@ mod tests {
                         syn::parse_quote!(u16),
                     },
                     syn::parse_quote!(..C) => indexset! {
-                        syn::parse_quote!(u16),
+                        syn::parse_quote!(usize),
                         syn::parse_quote!(String),
                     },
                 },
             },]
-        );
+        )
     }
 }

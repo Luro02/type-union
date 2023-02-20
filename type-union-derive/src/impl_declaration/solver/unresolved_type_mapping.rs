@@ -40,7 +40,7 @@ where
     result
 }
 
-fn debug_set<T: ToTokens>(set: IndexSet<T>) -> IndexSet<T> {
+pub(crate) fn debug_set<T: ToTokens>(set: IndexSet<T>) -> IndexSet<T> {
     eprint!("[");
     let mut iter = set.iter();
     if let Some(first) = iter.next() {
@@ -69,18 +69,9 @@ impl UnresolvedTypeMapping {
         }
 
         for (k, v) in other.variadics {
-            // TODO: here conflicts have to be resolved
-            // for example:
-            //
-            // (..A | ..B) = (u8 | u16 | u32)
-            // (..A | ..C) = (u8 | u32 | String)
-            // -> (..A) = (u8 | u32) and (..B) = (u16) and (..C) = (String)
             self.variadics
                 .entry(k)
                 .and_modify(|entry| {
-                    debug_set(v.clone());
-                    debug_set(entry.clone());
-                    // TODO: resolve conflict
                     entry.retain(|value| v.contains(value));
                 })
                 .or_insert(v);
@@ -112,12 +103,6 @@ impl UnresolvedTypeMapping {
             let mut type_mapping = TypeMapping::new();
 
             for (variadic, mut possible_values) in self.variadics.clone() {
-                // TODO: this does not make sense when there is more than one set possible
-                /*if let Some(mut values) = possible_values.into_iter().next() {
-                    values.retain(|ty| !combination.values().contains(ty));
-
-                    type_mapping.add_variadic_type(variadic, values);
-                }*/
                 possible_values.retain(|ty| !combination.values().contains(ty));
 
                 type_mapping.add_variadic_type(variadic, possible_values);

@@ -11,14 +11,26 @@ pub enum InferredValue<V> {
     Any(IndexSet<V>),
     /// The value is right now unknown.
     Unknown,
+    /// No value can be inferred, because of conflicting conditions.
+    Invalid,
 }
 
 impl<V: Hash + Eq> InferredValue<V> {
+    #[must_use]
+    pub fn from_possible_values(values: IndexSet<V>) -> Self {
+        match values.len() {
+            0 => Self::Invalid,
+            1 => Self::Fixed(values.into_iter().next().unwrap()),
+            _ => Self::Any(values),
+        }
+    }
+
     pub fn as_ref(&self) -> InferredValue<&V> {
         match self {
             Self::Fixed(value) => InferredValue::Fixed(value),
             Self::Any(values) => InferredValue::Any(values.iter().collect()),
             Self::Unknown => InferredValue::Unknown,
+            Self::Invalid => InferredValue::Invalid,
         }
     }
 
@@ -31,6 +43,7 @@ impl<V: Hash + Eq> InferredValue<V> {
             Self::Fixed(value) => InferredValue::Fixed(f(value)),
             Self::Any(values) => InferredValue::Any(values.into_iter().map(f).collect()),
             Self::Unknown => InferredValue::Unknown,
+            Self::Invalid => InferredValue::Invalid,
         }
     }
 
@@ -53,6 +66,7 @@ impl<V: Hash + Eq> InferredValue<&V> {
             Self::Fixed(value) => InferredValue::Fixed(value.clone()),
             Self::Any(values) => InferredValue::Any(values.into_iter().cloned().collect()),
             Self::Unknown => InferredValue::Unknown,
+            Self::Invalid => InferredValue::Invalid,
         }
     }
 }
