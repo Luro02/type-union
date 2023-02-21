@@ -1,12 +1,16 @@
 use convert_case::{Case, Casing};
+use indexmap::IndexSet;
 use proc_macro2::Span;
+use quote::ToTokens;
 use syn::spanned::Spanned;
 use syn::{Ident, Type};
 
 mod generator;
+mod looks_like;
 mod syn_ext;
 
 pub use generator::*;
+pub use looks_like::*;
 pub use syn_ext::*;
 
 #[must_use]
@@ -57,6 +61,21 @@ pub fn resolve_type_union_name<'a>(variants: impl IntoIterator<Item = &'a Type>)
     variants.sort_unstable();
 
     join_idents(variants.into_iter())
+}
+
+pub(crate) fn debug_set<T: ToTokens>(set: IndexSet<T>) -> IndexSet<T> {
+    eprint!("[");
+    let mut iter = set.iter();
+    if let Some(first) = iter.next() {
+        eprint!("`{}`", first.into_token_stream());
+    }
+
+    for item in iter {
+        eprint!(", `{}`", item.into_token_stream());
+    }
+
+    eprintln!("]");
+    set
 }
 
 pub fn unique_product<V, T>(values: V, size: usize) -> Vec<Vec<T>>

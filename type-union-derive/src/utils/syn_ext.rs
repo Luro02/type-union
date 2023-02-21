@@ -1,3 +1,5 @@
+use std::mem;
+
 use quote::ToTokens;
 use syn::parse::{Parse, ParseBuffer, ParseStream, Peek};
 use syn::punctuated::Punctuated;
@@ -27,7 +29,62 @@ impl ErrorExt for syn::Error {
     }
 }
 
+pub struct DrainFilter<'a, T, P, F> {
+    punctuated: &'a mut Punctuated<T, P>,
+    filter: F,
+    index: usize,
+}
+
+impl<'a, T, P: Default, F: FnMut(&mut T) -> bool> Iterator for DrainFilter<'a, T, P, F> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index >= self.punctuated.len() {
+            return None;
+        }
+
+        let should_remove = {
+            let item = self.punctuated.get_mut(self.index).unwrap();
+            (self.filter)(item)
+        };
+
+        let mut result = None;
+        if should_remove {
+            // the element is removed and returned
+            result = Some(self.punctuated.remove(self.index));
+
+            // the index must not be incremented, because
+            // the next element will now be at the index of the removed element
+        } else {
+            // the element is kept => increment the index
+            self.index += 1;
+        }
+
+        result
+    }
+}
+
+// TODO: test the extension methods?
 pub trait PunctuatedExt<T, P> {
+    #[must_use]
+    fn get_mut(&mut self, index: usize) -> Option<&mut T>;
+
+    fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut(&T) -> bool;
+
+    /// Removes all elements for which the provided function returns `true`.
+    fn drain_filter<F>(&mut self, f: F) -> DrainFilter<'_, T, P, F>
+    where
+        F: FnMut(&mut T) -> bool;
+
+    /// Removes the element at the given index and returns it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the index is out of bounds.
+    fn remove(&mut self, index: usize) -> T;
+
     #[must_use]
     fn filter<F>(self, predicate: F) -> Punctuated<T, P>
     where
@@ -41,6 +98,52 @@ pub trait PunctuatedExt<T, P> {
 }
 
 impl<T, P: Default> PunctuatedExt<T, P> for Punctuated<T, P> {
+    fn get_mut(&mut self, index: usize) -> Option<&mut T> {
+        self.iter_mut().nth(index)
+    }
+
+    fn drain_filter<F>(&mut self, f: F) -> DrainFilter<'_, T, P, F>
+    where
+        F: FnMut(&mut T) -> bool,
+    {
+        DrainFilter {
+            punctuated: self,
+            filter: f,
+            index: 0,
+        }
+    }
+
+    fn remove(&mut self, index: usize) -> T {
+        let mut result = None;
+
+        // TODO: improve performance
+        *self = mem::take(self)
+            .into_pairs()
+            .enumerate()
+            .filter_map(|(i, pair)| {
+                if i == index {
+                    result = Some(pair.into_value());
+                    None
+                } else {
+                    Some(pair)
+                }
+            })
+            .collect();
+
+        result.expect("index out of bounds")
+    }
+
+    fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&T) -> bool,
+    {
+        *self = mem::take(self)
+            .into_pairs()
+            .filter(|pair| f(pair.value()))
+            .collect();
+    }
+
+    // TODO: does map, filter and filter_map preserve the original punctuation?
     fn map<R, F: FnMut(T) -> R>(self, f: F) -> Punctuated<R, P> {
         self.into_iter().map(f).collect()
     }

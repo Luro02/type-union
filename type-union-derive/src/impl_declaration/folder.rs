@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 
 use syn::fold::Fold;
+use syn::parse::ParseStream;
+use syn::Token;
 
 use crate::impl_declaration::{EitherType, TypeMapping};
-use crate::input::{TypeUnion, TypeUnionDefinition, TypeUnionMatch};
+use crate::input::{TypeSignature, TypeUnion, TypeUnionDefinition, TypeUnionMatch};
 use crate::utils::{is_macro, resolve_type_name, PunctuatedExt};
 
 pub struct Folder<'a> {
@@ -12,6 +14,8 @@ pub struct Folder<'a> {
     pub declaration: &'a TypeUnionDefinition,
     pub self_ty: &'a TypeUnion<EitherType>,
     pub errors: Vec<syn::Error>,
+    pub trait_path: syn::Path,
+    pub signature: TypeSignature,
 }
 
 fn parse_promote_macro(mac: &syn::Macro, folder: &mut dyn Fold) -> syn::Result<syn::Expr> {
@@ -27,13 +31,59 @@ fn parse_promote_macro(mac: &syn::Macro, folder: &mut dyn Fold) -> syn::Result<s
     })
 }
 
+fn parse_optional_arg_macro(
+    mac: &syn::Macro,
+    folder: &mut dyn Fold,
+) -> syn::Result<(syn::Ident, syn::Type)> {
+    let (ident, ty) = mac.parse_body_with(|stream: ParseStream<'_>| {
+        let ident = stream.parse::<syn::Ident>()?;
+        let _eq_token = stream.parse::<Token![=]>()?;
+        let ty = stream.parse::<syn::Type>()?;
+
+        Ok((ident, ty))
+    })?;
+
+    Ok((folder.fold_ident(ident), folder.fold_type(ty)))
+}
+
 impl<'a> Fold for Folder<'a> {
+    fn fold_type_path(&mut self, mut ty_path: syn::TypePath) -> syn::TypePath {
+        // TODO: this does add a fallback for the case where one refers to a variadic type.
+        // For example the variadic ..A might be referred to in the impl as A::Item.
+        //
+        // The type of A::Item is not known, but A is not in the final code. So as a fallback
+        // add a mapping of A to the first possible type of ..A.
+        // TODO: this will be very inefficient
+        for (variadic, possible_values) in self.type_mapping.iter_variadics() {
+            let ident = variadic.ident();
+            let value = possible_values.iter().next().unwrap();
+
+            self.extra_mapping
+                .insert(syn::parse_quote! { #ident }, syn::parse_quote!(#value));
+        }
+
+        ty_path = syn::fold::fold_type_path(self, ty_path);
+
+        for (variadic, _) in self.type_mapping.iter_variadics() {
+            let ident = variadic.ident();
+
+            self.extra_mapping.remove(&syn::parse_quote!(#ident));
+        }
+
+        ty_path
+    }
+
     fn fold_type(&mut self, ty: syn::Type) -> syn::Type {
-        self.type_mapping
+        if let Some(ty) = self
+            .type_mapping
             .get(&ty)
             .or_else(|| self.extra_mapping.get(&ty))
             .cloned()
-            .unwrap_or_else(|| syn::fold::fold_type(self, ty))
+        {
+            return ty;
+        }
+
+        syn::fold::fold_type(self, ty)
     }
 
     fn fold_macro(&mut self, mac: syn::Macro) -> syn::Macro {
@@ -214,5 +264,30 @@ impl<'a> Fold for Folder<'a> {
         }
 
         syn::fold::fold_expr(self, syn::Expr::Macro(expr_mac))
+    }
+
+    fn fold_impl_item_type(&mut self, mut item_ty: syn::ImplItemType) -> syn::ImplItemType {
+        if let syn::Type::Macro(syn::TypeMacro { mac }) = &item_ty.ty {
+            if is_macro(&mac, "optional_arg") {
+                if let Ok((ident, ty)) = parse_optional_arg_macro(&mac, self) {
+                    let arg = self.signature.get_binding(&ident).cloned().unwrap_or(ty);
+
+                    item_ty.ty = arg;
+                } else {
+                    // TODO: error
+                }
+            } else if is_macro(&mac, "required_arg") {
+                if let Ok(ident) = mac.parse_body::<syn::Ident>() {
+                    // TODO: return error instead of unwrap
+                    let arg = self.signature.get_binding(&ident).cloned().unwrap();
+
+                    item_ty.ty = arg;
+                } else {
+                    // TODO: error
+                }
+            }
+        }
+
+        item_ty
     }
 }

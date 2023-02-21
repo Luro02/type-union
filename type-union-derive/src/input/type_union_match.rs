@@ -13,6 +13,7 @@ pub struct TypedMatchArm<T> {
     ident: Ident,
     _colon_token: syn::token::Colon,        // :
     _borrow_token: Option<syn::token::And>, // &
+    _mut_token: Option<syn::token::Mut>,    // mut
     pub ty: T,
     _fat_arrow_token: syn::token::FatArrow, // =>
     pub body: syn::Expr,
@@ -24,6 +25,7 @@ impl<T> TypedMatchArm<T> {
             ident: self.ident,
             _colon_token: self._colon_token,
             _borrow_token: self._borrow_token,
+            _mut_token: self._mut_token,
             ty: f(self.ty),
             _fat_arrow_token: self._fat_arrow_token,
             body: self.body,
@@ -38,6 +40,7 @@ impl<T: ToTokens> TypedMatchArm<T> {
         self.ident.to_tokens(&mut result);
         self._colon_token.to_tokens(&mut result);
         self._borrow_token.to_tokens(&mut result);
+        self._mut_token.to_tokens(&mut result);
         self.ty.to_tokens(&mut result);
         self._fat_arrow_token.to_tokens(&mut result);
         self.body.to_tokens(&mut result);
@@ -52,6 +55,7 @@ impl<T: Parse> Parse for TypedMatchArm<T> {
             ident: input.parse()?,
             _colon_token: input.parse()?,
             _borrow_token: input.parse()?,
+            _mut_token: input.parse()?,
             ty: input.parse()?,
             _fat_arrow_token: input.parse()?,
             body: input.parse()?,
@@ -72,7 +76,9 @@ impl ToTokens for TypedMatchArm<syn::Type> {
                 path: syn::Path::from(ident.clone()),
             }),
             &{
-                if self._borrow_token.is_some() {
+                if self._borrow_token.is_some() && self._mut_token.is_some() {
+                    syn::Type::Reference(syn::parse_quote!(& mut #ty))
+                } else if self._borrow_token.is_some() {
                     syn::Type::Reference(syn::parse_quote!(& #ty))
                 } else {
                     ty.clone()
@@ -167,14 +173,13 @@ impl ToTokens for TypeUnionMatch<syn::Type> {
         let assertion = assert_expr_is_type(expr, ty);
         let arms = self.arms.iter();
 
-        // TODO: a problem occurs when the expr is self
         let result = quote! {
             {
-                let #expr = #assertion;
+                let __expr = #assertion;
 
                 use #resolved_ty as This;
 
-                match #expr {
+                match __expr {
                     #(#arms),*
                 }
             }

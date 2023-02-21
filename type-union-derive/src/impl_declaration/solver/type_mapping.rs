@@ -19,6 +19,10 @@ impl TypeMapping {
         }
     }
 
+    pub fn iter_variadics(&self) -> impl Iterator<Item = (&WildcardParam, &IndexSet<syn::Type>)> {
+        self.variadic_types.iter()
+    }
+
     pub fn add_generic_type(&mut self, generic_type: GenericType, ty: syn::Type) {
         self.generic_types.insert(generic_type.to_type(), ty);
     }

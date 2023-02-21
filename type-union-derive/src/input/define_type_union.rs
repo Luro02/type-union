@@ -6,7 +6,7 @@ use syn::Token;
 
 use crate::impl_declaration::Template;
 use crate::input::TypeUnionDefinition;
-use crate::utils::PeekAfter;
+use crate::utils::{LooksLike, PeekAfter};
 
 enum Definition {
     Declaration(TypeUnionDefinition),
@@ -46,7 +46,7 @@ impl DefineTypeUnion {
     fn overrides_builtin_impl(&self, path: &syn::Path) -> bool {
         for trait_impl in self.impls() {
             // TODO: improve this comparison
-            if trait_impl.trait_path() == path {
+            if trait_impl.trait_path().looks_like(path) {
                 return true;
             }
         }

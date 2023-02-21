@@ -7,7 +7,7 @@ use syn::parse::{Parse, ParseStream};
 use syn::Token;
 
 use crate::impl_declaration::{EitherType, Folder, Generics, TypeSolver};
-use crate::input::{ImplementationArguments, TypeUnion, TypeUnionDefinition};
+use crate::input::{TypeSignature, TypeUnion, TypeUnionDefinition};
 
 /// Represents an implementation of a trait for a type union.
 #[derive(Debug, Clone)]
@@ -16,7 +16,7 @@ pub struct Template {
     item_impl: syn::ItemImpl,
     generics: Generics,
     trait_: (Option<Token![!]>, syn::Path, Token![for]),
-    template_args: ImplementationArguments,
+    signature: TypeSignature,
 }
 
 impl Template {
@@ -24,13 +24,25 @@ impl Template {
     pub fn built_in_impls() -> Vec<Self> {
         vec![
             syn::parse_quote! {
+                impl<anyA> ::core::iter::Iterator for type_union!(anyA)
+                where
+                    A: ::core::iter::Iterator,
+                {
+                    type Item = optional_arg!(Item = <A as ::core::iter::Iterator>::Item);
+                    fn next(&mut self) -> ::core::option::Option<Self::Item> {
+                        match_type_union!(self: &mut type_union!(anyA) {
+                            value: &mut anyA => { value.next().map(|value| Self::Item::from(value)) },
+                        })
+                    }
+                }
+            },
+            syn::parse_quote! {
                 impl<T, anyA> ::core::cmp::PartialEq<T> for type_union!(T | anyA)
                 where
                     T: ::core::cmp::PartialEq<T>,
                 {
                     fn eq(&self, other: &T) -> bool {
-                        let s = self;
-                        match_type_union!(s: &type_union!(T | anyA) {
+                        match_type_union!(self: &type_union!(T | anyA) {
                             value: &T => value == other,
                             value: &anyA => false
                         })
@@ -43,26 +55,20 @@ impl Template {
                     A: ::core::cmp::PartialEq<A>,
                 {
                     fn eq(&self, other: &type_union!(anyA)) -> bool {
-                        let s = self;
-                        match_type_union!(s: &type_union!(anyA | anyB) {
+                        match_type_union!(self: &type_union!(anyA | anyB) {
                             value: &anyA => other == value,
                             value: &anyB => false
                         })
                     }
                 }
             },
+            // TODO: PartialEq for not subsets of the other type union?
             syn::parse_quote! {
-                impl<anyA, anyB, anyC> ::core::cmp::PartialEq<type_union!(anyA | anyC)> for type_union!(anyA | anyB)
+                impl<anyA> ::core::cmp::Eq for type_union!(anyA)
                 where
-                    A: ::core::cmp::PartialEq<A>,
+                    A: ::core::cmp::Eq,
+                    Self: ::core::cmp::PartialEq,
                 {
-                    fn eq(&self, other: &type_union!(anyA | anyC)) -> bool {
-                        let s = self;
-                        match_type_union!(s: &type_union!(anyA | anyB) {
-                            value: &anyA => other == value,
-                            value: &anyB => false
-                        })
-                    }
                 }
             },
             syn::parse_quote! {
@@ -71,8 +77,7 @@ impl Template {
                     T: ::core::fmt::Display,
                 {
                     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-                        let s = self;
-                        match_type_union!(s: &type_union!(anyT) {
+                        match_type_union!(self: &type_union!(anyT) {
                             value: &anyT => ::core::write!(f, "{}", value),
                         })
                     }
@@ -91,18 +96,16 @@ impl Template {
 
     /// Returns the name of the trait that is implemented.
     pub fn trait_path(&self) -> &syn::Path {
-        
-
-        &self.trait_.1 as _
+        &self.trait_.1
     }
 
     fn try_apply_args(
         &self,
         declaration: &TypeUnionDefinition,
         mut solver: TypeSolver,
-        args: ImplementationArguments,
+        concrete_signature: &TypeSignature,
     ) -> syn::Result<Vec<syn::ItemImpl>> {
-        for (targ, arg) in self.template_args.types().zip(args.types()) {
+        for (targ, arg) in self.signature.types().zip(concrete_signature.types()) {
             solver.add_type_constraint(targ, arg)?;
         }
 
@@ -115,6 +118,8 @@ impl Template {
                 declaration,
                 self_ty: &self.self_ty,
                 errors: Vec::new(),
+                trait_path: self.trait_path().clone(),
+                signature: concrete_signature.clone(),
             };
 
             let item_impl = folder.fold_item_impl(self.item_impl.clone());
@@ -141,7 +146,7 @@ impl Template {
         solver.add_union_constraint(&self.self_ty, declaration.type_union())?;
 
         let mut impls = Vec::new();
-        for args in declaration.impl_attr().get_args(self.trait_path()) {
+        for args in declaration.impl_attr().get_traits(self.trait_path()) {
             impls.extend(self.try_apply_args(declaration, solver.clone(), args)?);
         }
 
@@ -165,8 +170,6 @@ impl Template {
                     if ty.is_wildcard() {
                         found_wildcard = true;
                     } else if found_wildcard {
-                        // TODO: parse everything and emit a multi-span containing all
-                        // concrete types that violate this rule
                         return Err(syn::Error::new_spanned(
                             ty,
                             "first list all concrete types, then all wildcards",
@@ -217,27 +220,14 @@ impl Parse for Template {
             ));
         };
 
-        let template_args = {
-            match path.segments.last().unwrap().arguments.clone() {
-                syn::PathArguments::AngleBracketed(args) => {
-                    Some(ImplementationArguments::from(args))
-                }
-                syn::PathArguments::Parenthesized(template_args) => {
-                    return Err(syn::Error::new_spanned(
-                        template_args,
-                        "expected angle bracketed arguments",
-                    ));
-                }
-                _ => None,
-            }
-        };
+        let signature = TypeSignature::try_from(path.clone())?;
 
         Ok(Self {
             self_ty,
             item_impl,
             trait_: (_bang, path, _for),
             generics,
-            template_args: template_args.unwrap_or_default(),
+            signature,
         })
     }
 }

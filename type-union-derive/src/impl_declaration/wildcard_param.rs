@@ -21,6 +21,10 @@ impl WildcardParam {
             ident: ident.clone(),
         })
     }
+
+    pub fn ident(&self) -> &syn::Ident {
+        &self.ident
+    }
 }
 
 impl Parse for WildcardParam {

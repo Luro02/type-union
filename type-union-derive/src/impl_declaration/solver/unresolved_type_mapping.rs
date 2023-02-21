@@ -2,7 +2,6 @@ use std::hash::Hash;
 
 use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
-use quote::ToTokens;
 
 use super::{IndexMapExt, TypeMapping};
 use crate::impl_declaration::{GenericType, WildcardParam};
@@ -38,21 +37,6 @@ where
         .collect::<Vec<_>>();
 
     result
-}
-
-pub(crate) fn debug_set<T: ToTokens>(set: IndexSet<T>) -> IndexSet<T> {
-    eprint!("[");
-    let mut iter = set.iter();
-    if let Some(first) = iter.next() {
-        eprint!("`{}`", first.into_token_stream());
-    }
-
-    for item in iter {
-        eprint!(", `{}`", item.into_token_stream());
-    }
-
-    eprintln!("]");
-    set
 }
 
 impl UnresolvedTypeMapping {
