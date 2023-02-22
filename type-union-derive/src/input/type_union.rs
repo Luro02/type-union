@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::fmt::Debug;
 use std::hash::Hash;
 
 use indexmap::IndexSet;
@@ -9,7 +9,7 @@ use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 use syn::{parenthesized, Token};
 
-use crate::utils::{self, resolve_type_union_name, ParseStreamExt, PunctuatedExt};
+use crate::utils::{self, resolve_type_union_name, PunctuatedSet};
 
 pub trait Type: Parse + ToTokens + Clone + Hash + Eq {}
 
@@ -17,13 +17,13 @@ impl<T: Parse + ToTokens + Clone + Hash + Eq> Type for T {}
 
 /// A [`TypeUnion`] input looks like this: `A | B | C`, with optional `()`, `(A | B | C)`
 #[derive(Debug, Clone)]
-pub struct TypeUnion<T> {
+pub struct TypeUnion<T: Type> {
     _paren_token: Option<syn::token::Paren>,
     // `Token![|]` in combination with generics and derive is not allowed, see:
     // https://github.com/rust-lang/rust/issues/50676
     //
     // Therefore the concrete type is used here
-    punctuated: Punctuated<T, syn::token::Or>,
+    punctuated: PunctuatedSet<T, syn::token::Or>,
 }
 
 impl<T: Type> TypeUnion<T> {
@@ -45,10 +45,10 @@ impl<T: Type> TypeUnion<T> {
     }
 
     #[must_use]
-    pub fn map_types<U, F: FnMut(T) -> U>(self, f: F) -> TypeUnion<U> {
+    pub fn map_types<U: Type, F: FnMut(T) -> U>(self, f: F) -> TypeUnion<U> {
         TypeUnion {
             _paren_token: self._paren_token,
-            punctuated: self.punctuated.map(f),
+            punctuated: self.punctuated.into_iter().map(f).collect(),
         }
     }
 
@@ -148,27 +148,8 @@ impl TypeUnion<syn::Type> {
     }
 }
 
-fn parse_type<T: Type + Hash + Eq>(
-    visited: &mut HashSet<T>,
-    input: ParseStream<'_>,
-) -> syn::Result<T> {
-    let ty = input.parse::<T>()?;
-
-    if visited.contains(&ty) {
-        // TODO: add more information to error? like the location?
-        // TODO: write a ui test?
-        return Err(input.error("duplicate type name"));
-    }
-
-    visited.insert(ty.clone());
-
-    Ok(ty)
-}
-
 impl<T: Type + Hash + Eq> Parse for TypeUnion<T> {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let mut visited = HashSet::new();
-
         // reassign input to local variable, so the borrowed &content does
         // live long enough
         let mut input = input;
@@ -184,10 +165,18 @@ impl<T: Type + Hash + Eq> Parse for TypeUnion<T> {
                     None
                 }
             },
-            punctuated: input.parse_terminated2(|input| {
-                // parse each element of the type union and check for duplicates
-                parse_type(&mut visited, input)
-            })?,
+            punctuated: {
+                let punctuated: Punctuated<_, _> = input.parse_terminated(T::parse)?;
+
+                if punctuated.is_empty() {
+                    return Err(syn::Error::new_spanned(
+                        punctuated,
+                        "type union must not be empty",
+                    ));
+                }
+
+                PunctuatedSet::try_from(punctuated)?
+            },
         })
     }
 }
@@ -198,13 +187,9 @@ impl ToTokens for TypeUnion<syn::Type> {
     }
 }
 
-impl<T: Type + Eq + Hash + PartialEq> PartialEq for TypeUnion<T> {
+impl<T: Type> PartialEq for TypeUnion<T> {
     fn eq(&self, other: &Self) -> bool {
-        // TODO: better implementation?
-        let left = self.iter_types().collect::<HashSet<_>>();
-        let right = other.iter_types().collect::<HashSet<_>>();
-
-        left == right
+        self.punctuated == other.punctuated
     }
 }
 
@@ -259,7 +244,7 @@ mod tests {
         let input = syn::parse_str::<TypeUnion<syn::Type>>("A | B | A");
         assert_eq!(
             input.err().map(|e| e.to_string()),
-            Some("unexpected end of input, duplicate type name".to_string())
+            Some("input must not contain duplicate values".to_string())
         );
     }
 
