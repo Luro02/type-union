@@ -20,10 +20,6 @@ impl TypeUnionDefinition {
         &self.impl_attr
     }
 
-    fn path(&self) -> syn::Path {
-        self.type_union.path()
-    }
-
     fn variants(&self) -> impl Iterator<Item = (syn::Ident, syn::Type)> + '_ {
         self.type_union
             .iter_types()
@@ -61,7 +57,7 @@ impl Parse for TypeUnionDefinition {
 
 impl ToTokens for TypeUnionDefinition {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let ident = self.path();
+        let ident = self.type_union.to_type();
 
         let (variant_names, variant_types): (Vec<_>, Vec<_>) = self.variants().unzip();
 

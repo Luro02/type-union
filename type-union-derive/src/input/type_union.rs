@@ -107,20 +107,13 @@ impl TypeUnion<syn::Type> {
     /// It is not guranteed that the returned value of the function is the same across
     /// different versions.
     #[must_use]
-    fn ident(&self) -> syn::Ident {
-        resolve_type_union_name(self.punctuated.iter())
-    }
-
-    // TODO: reduce number of getters, either to_type or path, not both
-    #[must_use]
     pub fn to_type(&self) -> syn::Type {
         syn::Type::Path(syn::TypePath {
             qself: None,
-            path: self.path(),
+            path: syn::Path::from(resolve_type_union_name(self.punctuated.iter())),
         })
     }
 
-    // TODO: test this?
     #[must_use]
     pub fn to_macro_tokens(&self) -> TokenStream {
         let mut tokens = TokenStream::new();
@@ -141,10 +134,6 @@ impl TypeUnion<syn::Type> {
         }
 
         tokens
-    }
-
-    pub fn path(&self) -> syn::Path {
-        syn::Path::from(self.ident())
     }
 }
 
@@ -183,7 +172,7 @@ impl<T: Type + Hash + Eq> Parse for TypeUnion<T> {
 
 impl ToTokens for TypeUnion<syn::Type> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        tokens.append(self.ident())
+        self.to_type().to_tokens(tokens)
     }
 }
 
@@ -205,7 +194,6 @@ mod tests {
     #[test]
     fn test_parse() {
         let input: TypeUnion<syn::Type> = syn::parse_quote!(A | B | C);
-        assert_eq!(input.ident().to_string(), "Abc");
         let mut iter = input.iter_types();
         assert_eq!(iter.next(), Some(&syn::parse_quote!(A)));
         assert_eq!(iter.next(), Some(&syn::parse_quote!(B)));
@@ -231,7 +219,6 @@ mod tests {
     fn test_parse_paren() {
         let input = syn::parse_str::<TypeUnion<syn::Type>>("(A | B | C)").unwrap();
         assert_eq!(input.is_parenthesized(), true);
-        assert_eq!(input.ident().to_string(), "Abc");
         let mut iter = input.iter_types();
         assert_eq!(iter.next(), Some(&syn::parse_str("A").unwrap()));
         assert_eq!(iter.next(), Some(&syn::parse_str("B").unwrap()));
