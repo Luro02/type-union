@@ -6,7 +6,7 @@ use syn::Token;
 
 use crate::impl_declaration::Template;
 use crate::input::TypeUnionDefinition;
-use crate::utils::{LooksLike, PeekAfter};
+use crate::utils::{ErrorExt, LooksLike, PeekAfter};
 
 enum Definition {
     Declaration(TypeUnionDefinition),
@@ -43,14 +43,13 @@ impl DefineTypeUnion {
         })
     }
 
-    fn overrides_builtin_impl(&self, path: &syn::Path) -> bool {
-        for trait_impl in self.impls() {
-            if trait_impl.trait_path().looks_like(path) {
-                return true;
-            }
-        }
-
-        false
+    /// Checks if the given path overrides a given impl.
+    ///
+    /// Returns `true` if the given path would override an `impl`, otherwise `false`.
+    #[must_use]
+    fn overrides_impl(&self, path: &syn::Path) -> bool {
+        self.impls()
+            .any(|trait_impl| trait_impl.trait_path().looks_like(path))
     }
 }
 
@@ -71,18 +70,20 @@ impl ToTokens for DefineTypeUnion {
         }
 
         let mut errors = Vec::new();
-        for trait_impl in Template::built_in_impls() {
-            if self.overrides_builtin_impl(trait_impl.trait_path()) {
-                continue;
-            }
+        let mut templates = Template::built_in_impls();
 
-            // TODO: duplicate code between the two loops!
+        templates.retain(|trait_impl| !self.overrides_impl(trait_impl.trait_path()));
+
+        for trait_impl in templates.iter().chain(self.impls()) {
             for decl in self.declarations() {
                 if !decl.impl_attr().has_trait(trait_impl.trait_path()) {
                     continue;
                 }
 
-                match trait_impl.try_apply(decl) {
+                match trait_impl.try_apply(
+                    decl.type_union(),
+                    decl.impl_attr().get_traits(trait_impl.trait_path()),
+                ) {
                     Ok(output) => {
                         errors.clear();
                         tokens.append_all(output);
@@ -92,28 +93,9 @@ impl ToTokens for DefineTypeUnion {
             }
         }
 
-        for trait_impl in self.impls() {
-            for decl in self.declarations() {
-                if !decl.impl_attr().has_trait(trait_impl.trait_path()) {
-                    continue;
-                }
-
-                match trait_impl.try_apply(decl) {
-                    Ok(output) => {
-                        errors.clear();
-                        tokens.append_all(output);
-                    }
-                    Err(error) => errors.push(error),
-                }
-            }
-        }
-
-        // TODO: make this a trait extension on syn::Error a la syn::Error::combine_all()
-        if let Some(error) = errors.into_iter().reduce(|mut acc, error| {
-            acc.combine(error);
-            acc
-        }) {
-            tokens.append_all(error.into_compile_error());
+        let mut errors = errors.into_iter();
+        if let Some(error) = errors.next() {
+            tokens.append_all(error.combine_all(errors).into_compile_error());
         }
     }
 }

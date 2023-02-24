@@ -6,13 +6,13 @@ use syn::fold::Fold;
 use syn::parse::{Parse, ParseStream};
 use syn::Token;
 
-use crate::impl_declaration::{EitherType, Folder, Generics, TypeSolver};
-use crate::input::{TypeSignature, TypeUnion, TypeUnionDefinition};
+use crate::impl_declaration::{Folder, Generics, TypeSolver};
+use crate::input::{TypeSignature, TypeUnion};
 
 /// Represents an implementation of a trait for a type union.
 #[derive(Debug, Clone)]
 pub struct Template {
-    self_ty: TypeUnion<EitherType>,
+    self_ty: syn::Type,
     item_impl: syn::ItemImpl,
     generics: Generics,
     trait_: (Option<Token![!]>, syn::Path, Token![for]),
@@ -101,7 +101,6 @@ impl Template {
 
     fn try_apply_args(
         &self,
-        declaration: &TypeUnionDefinition,
         mut solver: TypeSolver,
         concrete_signature: &TypeSignature,
     ) -> syn::Result<Vec<syn::ItemImpl>> {
@@ -115,11 +114,10 @@ impl Template {
             let mut folder = Folder {
                 extra_mapping: HashMap::new(),
                 type_mapping,
-                declaration,
-                self_ty: &self.self_ty,
                 errors: Vec::new(),
-                trait_path: self.trait_path().clone(),
-                signature: concrete_signature.clone(),
+                trait_path: &self.trait_path(),
+                signature: &concrete_signature,
+                generics: &self.generics,
             };
 
             let item_impl = folder.fold_item_impl(self.item_impl.clone());
@@ -140,64 +138,24 @@ impl Template {
         Ok(impls)
     }
 
-    pub fn try_apply(&self, declaration: &TypeUnionDefinition) -> syn::Result<TokenStream> {
+    pub fn try_apply<'a, I>(
+        &self,
+        type_union: &TypeUnion<syn::Type>,
+        traits: I,
+    ) -> syn::Result<TokenStream>
+    where
+        I: IntoIterator<Item = &'a TypeSignature>,
+    {
         let mut solver = TypeSolver::new(self.generics.clone());
 
-        solver.add_union_constraint(&self.self_ty, declaration.type_union())?;
+        solver.add_type_constraint(&self.self_ty, &type_union.to_macro_type())?;
 
         let mut impls = Vec::new();
-        for args in declaration.impl_attr().get_traits(self.trait_path()) {
-            impls.extend(self.try_apply_args(declaration, solver.clone(), args)?);
+        for args in traits {
+            impls.extend(self.try_apply_args(solver.clone(), args)?);
         }
 
         Ok(quote!(#(#impls)*))
-    }
-
-    fn parse_self_ty_union(
-        item_impl: &syn::ItemImpl,
-    ) -> syn::Result<(TypeUnion<EitherType>, Generics)> {
-        let self_ty = &item_impl.self_ty;
-
-        let generics = Generics::new(item_impl.generics.clone());
-
-        if let syn::Type::Macro(syn::TypeMacro { mac }) = self_ty.as_ref() {
-            if mac.path.is_ident("type_union") {
-                let tokens = mac.tokens.clone();
-                let mut type_union = syn::parse2::<TypeUnion<EitherType>>(tokens)?;
-
-                let mut found_wildcard = false;
-                for ty in type_union.iter_types() {
-                    if ty.is_wildcard() {
-                        found_wildcard = true;
-                    } else if found_wildcard {
-                        return Err(syn::Error::new_spanned(
-                            ty,
-                            "first list all concrete types, then all wildcards",
-                        ));
-                    }
-                }
-
-                // TODO: what about lifetimes and const generics?
-                type_union = type_union.map_types(|ty| {
-                    if let EitherType::Concrete(ty) = &ty {
-                        if let syn::Type::Path(ty_path) = ty.as_ref() {
-                            if let Some(generic) = generics.get(&ty_path.path) {
-                                return EitherType::Generic(generic);
-                            }
-                        }
-                    }
-
-                    ty
-                });
-
-                return Ok((type_union, generics));
-            }
-        }
-
-        Err(syn::Error::new_spanned(
-            self_ty,
-            "expected type union for self type",
-        ))
     }
 }
 
@@ -207,7 +165,8 @@ impl Parse for Template {
 
         // first ensure that the self type is a type union (other impls are not yet supported)
         // TODO: ^ issue about this missing feature
-        let (self_ty, generics) = Self::parse_self_ty_union(&item_impl)?;
+        let self_ty = *item_impl.self_ty.clone();
+        let generics = Generics::new(item_impl.generics.clone());
 
         // then check generics for any `anyX` types
 

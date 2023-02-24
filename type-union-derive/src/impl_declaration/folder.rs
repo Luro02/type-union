@@ -4,18 +4,17 @@ use syn::fold::Fold;
 use syn::parse::ParseStream;
 use syn::Token;
 
-use crate::impl_declaration::{EitherType, TypeMapping};
-use crate::input::{TypeSignature, TypeUnion, TypeUnionDefinition, TypeUnionMatch};
+use crate::impl_declaration::{EitherType, Generics, TypeMapping};
+use crate::input::{TypeSignature, TypeUnion, TypeUnionMatch};
 use crate::utils::{is_macro, resolve_type_name, PunctuatedExt};
 
 pub struct Folder<'a> {
     pub extra_mapping: HashMap<syn::Type, syn::Type>,
     pub type_mapping: TypeMapping,
-    pub declaration: &'a TypeUnionDefinition,
-    pub self_ty: &'a TypeUnion<EitherType>,
     pub errors: Vec<syn::Error>,
-    pub trait_path: syn::Path,
-    pub signature: TypeSignature,
+    pub trait_path: &'a syn::Path,
+    pub signature: &'a TypeSignature,
+    pub generics: &'a Generics,
 }
 
 fn parse_promote_macro(mac: &syn::Macro, folder: &mut dyn Fold) -> syn::Result<syn::Expr> {
@@ -164,6 +163,8 @@ impl<'a> Fold for Folder<'a> {
                 syn::WherePredicate::Type(mut ty) => {
                     let mut predicates = Vec::new();
 
+                    // TODO: move this to Generics?
+
                     // TODO: what about bounds on concrete types? (I think they are lost)
 
                     // add a bound for the generic type to concrete type
@@ -185,19 +186,45 @@ impl<'a> Fold for Folder<'a> {
 
                     // TODO: allow the inverse: String: From<A> where anyA
                     // TODO: resolve From<String>: A or From<A>: String and the likes
-                    if let Some(possible_types) = self.type_mapping.get_if_variadic(&ty.bounded_ty)
-                    {
-                        for concrete_ty in possible_types.clone() {
-                            let bounded_ty = ty.bounded_ty.clone();
 
-                            self.extra_mapping
-                                .insert(bounded_ty.clone(), concrete_ty.clone());
+                    // on the left-side of the bound is always a type and on the right-side is a trait:
+                    // where
+                    //   <type>: <trait>
+                    //
+                    // the variadic can appear as the type:
+                    // where
+                    //   A: <trait>
+                    // in which case the trait is repeated for all possible types of the variadic.
+                    //
+                    // it can also appear inside the type as a generic parameter:
+                    // where
+                    //   MyStruct<A>: <trait>
+                    //
+                    // This is not supported yet, because of this case:
+                    // where
+                    //   MyStruct<A, B>: <trait>
+                    //
+                    // (where A and B are variadics)
+                    // ^ TODO: write issue
 
-                            let result = self.fold_predicate_type(ty.clone());
+                    if let syn::Type::Path(syn::TypePath { path, .. }) = &ty.bounded_ty {
+                        if let Some(possible_types) = self
+                            .generics
+                            .get_variadic(path)
+                            .and_then(|variadic| self.type_mapping.get_variadic(&variadic))
+                        {
+                            for concrete_ty in possible_types.clone() {
+                                let bounded_ty = ty.bounded_ty.clone();
 
-                            let removed_value = self.extra_mapping.remove(&ty.bounded_ty);
-                            debug_assert_eq!(removed_value, Some(concrete_ty));
-                            predicates.push(syn::WherePredicate::Type(result));
+                                self.extra_mapping
+                                    .insert(bounded_ty.clone(), concrete_ty.clone());
+
+                                let result = self.fold_predicate_type(ty.clone());
+
+                                let removed_value = self.extra_mapping.remove(&ty.bounded_ty);
+                                debug_assert_eq!(removed_value, Some(concrete_ty));
+                                predicates.push(syn::WherePredicate::Type(result));
+                            }
                         }
                     }
 

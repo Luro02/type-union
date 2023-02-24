@@ -12,12 +12,6 @@ pub enum EitherType {
     Variadic(Variadic),
 }
 
-impl EitherType {
-    pub fn is_wildcard(&self) -> bool {
-        matches!(self, Self::Variadic(_))
-    }
-}
-
 impl Parse for EitherType {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         // look for anyT
@@ -54,15 +48,15 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn test_parse() {
+    fn test_parse_from_variadic() {
         let input = quote::quote! {
             ..T
         };
-        let expected = EitherType::Variadic(Variadic {
-            dots_token: Some(Token![..](proc_macro2::Span::call_site())),
-            ident: syn::Ident::new("T", proc_macro2::Span::call_site()),
-        });
-        let actual = syn::parse2::<EitherType>(input).unwrap();
-        assert_eq!(expected, actual);
+
+        let variadic: Variadic = syn::parse_quote!(..T);
+        assert_eq!(
+            EitherType::Variadic(variadic),
+            syn::parse2::<EitherType>(input).unwrap()
+        );
     }
 }

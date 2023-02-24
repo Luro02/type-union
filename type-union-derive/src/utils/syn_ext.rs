@@ -5,10 +5,17 @@ use syn::parse::{Parse, ParseBuffer, ParseStream, Peek};
 use syn::punctuated::Punctuated;
 
 pub trait ErrorExt {
+    #[must_use]
     fn with_spans<I>(self, spans: I) -> Self
     where
         I: IntoIterator,
         I::Item: ToTokens;
+
+    #[must_use]
+    fn combine_all<I>(self, errors: I) -> Self
+    where
+        I: IntoIterator<Item = Self>,
+        Self: Sized;
 }
 
 impl ErrorExt for syn::Error {
@@ -26,6 +33,17 @@ impl ErrorExt for syn::Error {
         }
 
         result
+    }
+
+    fn combine_all<I>(self, errors: I) -> Self
+    where
+        I: IntoIterator<Item = Self>,
+        Self: Sized,
+    {
+        errors.into_iter().fold(self, |mut acc, error| {
+            acc.combine(error);
+            acc
+        })
     }
 }
 

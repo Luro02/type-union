@@ -41,16 +41,6 @@ impl TypeMapping {
     pub fn get_variadic(&self, variadic: &Variadic) -> Option<&IndexSet<syn::Type>> {
         self.variadic_types.get(variadic)
     }
-
-    pub fn get_if_variadic(&self, variadic: &syn::Type) -> Option<&IndexSet<syn::Type>> {
-        if let syn::Type::Path(syn::TypePath { path, .. }) = variadic {
-            if let Some(variadic) = Variadic::try_from_path(path) {
-                return self.get_variadic(&variadic);
-            }
-        }
-
-        None
-    }
 }
 
 struct DebugPath<'a>(&'a syn::Path);

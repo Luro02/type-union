@@ -94,25 +94,6 @@ impl<T: Type> TypeUnion<T> {
     pub fn span(&self) -> Span {
         self.punctuated.span()
     }
-}
-
-impl TypeUnion<syn::Type> {
-    /// Returns the name of the type that type union resolves to.
-    ///
-    /// There are no anonymous enums in the rust language for now, so
-    /// each type union resolves to some concrete type: `(A | B | C)` -> `Abc`.
-    ///
-    /// ## Note
-    ///
-    /// It is not guranteed that the returned value of the function is the same across
-    /// different versions.
-    #[must_use]
-    pub fn to_type(&self) -> syn::Type {
-        syn::Type::Path(syn::TypePath {
-            qself: None,
-            path: syn::Path::from(resolve_type_union_name(self.punctuated.iter())),
-        })
-    }
 
     #[must_use]
     pub fn to_macro_tokens(&self) -> TokenStream {
@@ -134,6 +115,37 @@ impl TypeUnion<syn::Type> {
         }
 
         tokens
+    }
+
+    #[must_use]
+    pub fn to_macro_type(&self) -> syn::Type {
+        syn::Type::Macro(syn::TypeMacro {
+            mac: syn::Macro {
+                path: syn::parse_quote!(type_union),
+                bang_token: Default::default(),
+                delimiter: syn::MacroDelimiter::Paren(Default::default()),
+                tokens: self.to_macro_tokens(),
+            },
+        })
+    }
+}
+
+impl TypeUnion<syn::Type> {
+    /// Returns the name of the type that type union resolves to.
+    ///
+    /// There are no anonymous enums in the rust language for now, so
+    /// each type union resolves to some concrete type: `(A | B | C)` -> `Abc`.
+    ///
+    /// ## Note
+    ///
+    /// It is not guranteed that the returned value of the function is the same across
+    /// different versions.
+    #[must_use]
+    pub fn to_type(&self) -> syn::Type {
+        syn::Type::Path(syn::TypePath {
+            qself: None,
+            path: syn::Path::from(resolve_type_union_name(self.punctuated.iter())),
+        })
     }
 }
 

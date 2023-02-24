@@ -4,7 +4,7 @@ use quote::ToTokens;
 use super::{SetId, TypeMapping, TypeUnionSet, UnresolvedTypeMapping};
 use crate::impl_declaration::{EitherType, GenericType, Generics, Variadic};
 use crate::input::TypeUnion;
-use crate::utils::is_macro;
+use crate::utils::{is_macro, LooksLike};
 
 #[derive(Debug, Clone)]
 pub struct TypeSolver {
@@ -163,15 +163,56 @@ impl TypeSolver {
 
                 self.add_union_constraint(&templ_type_union, &decl_type_union)?;
             }
-            (syn::Type::Path(templ_path), syn::Type::Path(decl_path)) => {
-                // check if templ_path is a generic
-                if let Some(generic) = self.generics.get(&templ_path.path) {
-                    self.set_generic_type_equal_to(generic, syn::Type::Path(decl_path.clone()));
-                } else if templ_path != decl_path {
-                    return Err(syn::Error::new_spanned(
-                        decl_path,
-                        format!("expected type to be '{}'", templ_path.into_token_stream()),
-                    ));
+            // TODO: support constraining a generic to a concrete type (e.g. `T = u8`)
+            (
+                syn::Type::Path(syn::TypePath {
+                    path: templ_path, ..
+                }),
+                syn::Type::Path(syn::TypePath {
+                    path: decl_path, ..
+                }),
+            ) => {
+                // check if templ_path is a generic, then the generic = decl_path
+                if let Some(generic) = self.generics.get_generic(&templ_path) {
+                    self.set_generic_type_equal_to(
+                        generic,
+                        syn::Type::Path(syn::TypePath {
+                            qself: None,
+                            path: decl_path.clone(),
+                        }),
+                    );
+                } else if templ_path.looks_like(decl_path) {
+                    // the paths look similar
+                    // call this function on the generics of the paths
+                    //
+                    // e.g. `Vec<T>` = `Vec<u8>` -> `T` = `u8
+                    let last_templ_segment = templ_path.segments.last().unwrap();
+                    let last_decl_segment = decl_path.segments.last().unwrap();
+
+                    if let (
+                        syn::PathArguments::AngleBracketed(templ_args),
+                        syn::PathArguments::AngleBracketed(decl_args),
+                    ) = (&last_templ_segment.arguments, &last_decl_segment.arguments)
+                    {
+                        for (templ_arg, decl_arg) in
+                            templ_args.args.iter().zip(decl_args.args.iter())
+                        {
+                            if let (
+                                syn::GenericArgument::Type(templ_arg),
+                                syn::GenericArgument::Type(decl_arg),
+                            ) = (templ_arg, decl_arg)
+                            {
+                                self.add_type_constraint(templ_arg, decl_arg)?;
+                            }
+                        }
+                    }
+                } else {
+                    if templ_path != decl_path {
+                        return Err(syn::Error::new_spanned(
+                            decl_path,
+                            format!("expected type to be '{}'", templ_path.into_token_stream()),
+                        ));
+                    }
                 }
             }
             (_, _) => {
