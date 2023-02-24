@@ -1,3 +1,4 @@
+use std::assert_matches::debug_assert_matches;
 use std::hash::Hash;
 
 use indexmap::indexset;
@@ -96,23 +97,26 @@ impl TypeUnionSet {
         mut right: InferenceArgument<SetId>,
     ) -> (InferenceArgument<SetId>, InferenceArgument<SetId>) {
         // TODO: the modification of the base type is questionable
-        // TODO: right.value = left.value.clone() is used after every match arm, so maybe move it to the end of the function?
+
+        // essentially the following are uninteresting:
+        // - Invalid
+        // - Fixed
+        //
+        // the following are of interest:
+        // - Unknown
+        // - Any
+        //
+        // ^ the Unknown and Any cases share the same code, the Unknown has the
+        //   base types as the possible values.
+
         match (left.value.clone(), right.value.clone()) {
             // if either is invalid, then both are invalid
             (InferredValue::Invalid, _) | (_, InferredValue::Invalid) => {
                 left.value = InferredValue::Invalid;
-                right.value = InferredValue::Invalid;
             }
             // the other type union knows exactly what type the variadic must have, now both know it:
             (InferredValue::Fixed(set), _) | (_, InferredValue::Fixed(set)) => {
                 left.value = InferredValue::Fixed(set);
-                right.value = left.value.clone();
-
-                // the variadic is now fixed, so remove the types from the base types
-                let fixed_set = set_collection.get_set(&set);
-
-                left.base_types.retain(|ty| !fixed_set.contains(ty));
-                right.base_types.retain(|ty| !fixed_set.contains(ty));
             }
             // the other type union knows more about the variadic, so update both:
             (InferredValue::Any(values), InferredValue::Unknown)
@@ -121,7 +125,7 @@ impl TypeUnionSet {
                     if matches!(right.value, InferredValue::Unknown) {
                         right.base_types.clone()
                     } else {
-                        debug_assert!(matches!(left.value, InferredValue::Unknown));
+                        debug_assert_matches!(left.value, InferredValue::Unknown);
                         left.base_types.clone()
                     }
                 };
@@ -145,24 +149,13 @@ impl TypeUnionSet {
                     .collect::<IndexSet<_>>();
 
                 left.value = InferredValue::from_possible_values(new_values);
-                right.value = left.value.clone();
             }
             // both sets have a list of possible sets, so the intersection is the new set
             (InferredValue::Any(mut left_values), InferredValue::Any(right_values)) => {
                 // only keep the values that are present in both sets
                 left_values.retain(|v| right_values.contains(v));
 
-                // TODO: use InferredValue::from_possible_values
-                if left_values.len() == 1 {
-                    let set = left_values.into_iter().next().unwrap();
-                    left.value = InferredValue::Fixed(set);
-                    // the variadic is now fixed, so remove the types from the base types:
-                    let fixed_set = set_collection.get_set(&set);
-
-                    left.base_types.retain(|ty| !fixed_set.contains(ty));
-                }
-
-                right.value = left.value.clone();
+                left.value = InferredValue::from_possible_values(left_values);
             }
             (InferredValue::Unknown, InferredValue::Unknown) => {
                 let mut new_values = IndexSet::new();
@@ -174,30 +167,34 @@ impl TypeUnionSet {
                 // obviously the variadic must consist of the intersection:
 
                 // TODO: deal with very large intersections, powerset will be 2^n-1 elements!
+                // A possible solution: do not compute the powerset directly. Instead introduce a
+                // new variant for InferredValue:
+                // PowerSet { set: SetId, } where the set is the intersection.
+                //
+                // Then later on, when one encounters a PowerSet or a Fixed/Any, one can compute
+                // the intersection of the sets and then compute the powerset of that
                 let intersection = left.base_types.intersection(&right.base_types);
-
-                // TODO: maybe eliminate impossible combinations?
 
                 for set in iter_subsets(intersection.cloned()) {
                     let set_id = set_collection.add_set(set);
                     new_values.insert(set_id);
                 }
 
-                // TODO: use InferredValue::from_possible_values
-                if new_values.len() == 1 {
-                    let set = new_values.iter().next().unwrap();
-                    left.value = InferredValue::Fixed(*set);
-
-                    // the variadic is now fixed, so remove the types from the base types:
-                    let fixed_set = set_collection.get_set(&set);
-
-                    left.base_types.retain(|ty| !fixed_set.contains(ty));
-                } else {
-                    left.value = InferredValue::from_possible_values(new_values);
-                }
-
-                right.value = left.value.clone();
+                left.value = InferredValue::from_possible_values(new_values);
             }
+        }
+
+        // the right side is the same as the left side (in the match only the left side is updated)
+        right.value = left.value.clone();
+
+        if let InferredValue::Fixed(set) = left.value {
+            // the variadic is now fixed, so remove the types from the base types:
+            let fixed_set = set_collection.get_set(&set);
+
+            left.base_types.retain(|ty| !fixed_set.contains(ty));
+            // the right side should be fixed as well to the same set
+            debug_assert_matches!(right.value, InferredValue::Fixed(_));
+            right.base_types.retain(|ty| !fixed_set.contains(ty));
         }
 
         (left, right)
@@ -224,7 +221,7 @@ impl TypeUnionSet {
                     if matches!(right.value, InferredValue::Unknown) {
                         &right.base_types
                     } else {
-                        debug_assert!(matches!(left.value, InferredValue::Unknown));
+                        debug_assert_matches!(left.value, InferredValue::Unknown);
                         &left.base_types
                     }
                 };
@@ -262,7 +259,7 @@ impl TypeUnionSet {
             right.base_types.remove(value);
         }
 
-        todo!()
+        (left, right)
     }
 
     pub fn update_with<S>(&mut self, mut set_collection: S, others: &mut [Self])

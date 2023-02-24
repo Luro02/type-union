@@ -185,7 +185,6 @@ impl ToTokens for TypeUnionMatch<syn::Type> {
             }
         };
 
-        // TODO: can (u64 | u32) be parsed as a TypeGroup?
         tokens.append_all(result);
     }
 }

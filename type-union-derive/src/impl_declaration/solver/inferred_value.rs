@@ -9,7 +9,7 @@ pub enum InferredValue<V> {
     Fixed(V),
     /// The value can be any of these values.
     Any(IndexSet<V>),
-    /// The value is right now unknown.
+    /// The value is not known.
     Unknown,
     /// No value can be inferred, because of conflicting conditions.
     Invalid,
@@ -25,6 +25,7 @@ impl<V: Hash + Eq> InferredValue<V> {
         }
     }
 
+    #[must_use]
     pub fn take(&mut self) -> InferredValue<V> {
         mem::replace(self, InferredValue::Unknown)
     }

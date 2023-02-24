@@ -1,4 +1,4 @@
-#![feature(iter_intersperse)]
+#![feature(iter_intersperse, assert_matches)]
 #![allow(clippy::uninlined_format_args, clippy::module_inception)]
 
 extern crate proc_macro;
