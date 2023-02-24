@@ -3,18 +3,18 @@ use quote::ToTokens;
 use syn::parse::{Parse, ParseStream};
 use syn::Token;
 
-use crate::impl_declaration::{GenericType, WildcardParam};
+use crate::impl_declaration::{GenericType, Variadic};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum EitherType {
     Generic(GenericType),
     Concrete(Box<syn::Type>),
-    Wildcard(WildcardParam),
+    Variadic(Variadic),
 }
 
 impl EitherType {
     pub fn is_wildcard(&self) -> bool {
-        matches!(self, Self::Wildcard(_))
+        matches!(self, Self::Variadic(_))
     }
 }
 
@@ -24,13 +24,13 @@ impl Parse for EitherType {
         let forked_input = input.fork();
         if let Ok(ident) = forked_input.parse::<syn::Ident>() {
             if ident.to_string().starts_with("any") {
-                return input.parse().map(Self::Wildcard);
+                return input.parse().map(Self::Variadic);
             }
         }
 
         let lookahead = input.lookahead1();
         if lookahead.peek(Token![..]) {
-            input.parse().map(Self::Wildcard)
+            input.parse().map(Self::Variadic)
         } else {
             input.parse().map(|ty| Self::Concrete(Box::new(ty)))
         }
@@ -42,7 +42,7 @@ impl ToTokens for EitherType {
         match self {
             Self::Concrete(concrete_type) => concrete_type.to_tokens(tokens),
             Self::Generic(generic_type) => generic_type.to_tokens(tokens),
-            Self::Wildcard(wildcard_type) => wildcard_type.to_tokens(tokens),
+            Self::Variadic(wildcard_type) => wildcard_type.to_tokens(tokens),
         }
     }
 }
@@ -58,7 +58,7 @@ mod tests {
         let input = quote::quote! {
             ..T
         };
-        let expected = EitherType::Wildcard(WildcardParam {
+        let expected = EitherType::Variadic(Variadic {
             dots_token: Some(Token![..](proc_macro2::Span::call_site())),
             ident: syn::Ident::new("T", proc_macro2::Span::call_site()),
         });

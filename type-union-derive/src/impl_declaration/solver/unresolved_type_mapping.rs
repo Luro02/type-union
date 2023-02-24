@@ -4,12 +4,12 @@ use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
 
 use super::{IndexMapExt, TypeMapping};
-use crate::impl_declaration::{GenericType, WildcardParam};
+use crate::impl_declaration::{GenericType, Variadic};
 
 #[derive(Clone, Debug)]
 pub struct UnresolvedTypeMapping {
     generic_types: IndexMap<GenericType, IndexSet<syn::Type>>,
-    variadics: IndexMap<WildcardParam, IndexSet<syn::Type>>,
+    variadics: IndexMap<Variadic, IndexSet<syn::Type>>,
 }
 
 // TODO: improve efficiency
@@ -73,11 +73,7 @@ impl UnresolvedTypeMapping {
             .insert_or_intersection(generic_type, possible_values);
     }
 
-    pub fn add_variadic_type(
-        &mut self,
-        variadic: WildcardParam,
-        possible_values: IndexSet<syn::Type>,
-    ) {
+    pub fn add_variadic_type(&mut self, variadic: Variadic, possible_values: IndexSet<syn::Type>) {
         self.variadics.insert(variadic, possible_values);
     }
 

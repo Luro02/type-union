@@ -5,15 +5,13 @@ use quote::{quote_spanned, ToTokens, TokenStreamExt};
 use syn::parse::{Parse, ParseStream};
 use syn::Token;
 
-// TODO: rename to variadic
-
 #[derive(Clone, PartialEq, Eq, Hash)]
-pub struct WildcardParam {
+pub struct Variadic {
     pub(crate) dots_token: Option<Token![..]>,
     pub(crate) ident: syn::Ident,
 }
 
-impl WildcardParam {
+impl Variadic {
     pub fn try_from_path(path: &syn::Path) -> Option<Self> {
         // TODO: how can the ident look like? is anyT allowed?
         path.get_ident().map(|ident| Self {
@@ -27,7 +25,7 @@ impl WildcardParam {
     }
 }
 
-impl Parse for WildcardParam {
+impl Parse for Variadic {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let lookahead = input.lookahead1();
 
@@ -37,13 +35,13 @@ impl Parse for WildcardParam {
                 ident: input.parse()?,
             })
         } else {
-            // anyT or not a wildcard
+            // anyT or not a variadic
             let ident = input.parse::<syn::Ident>()?;
 
             if !ident.to_string().starts_with("any") {
                 return Err(syn::Error::new_spanned(
                     ident,
-                    "not a wildcard param, which must start with either .. or any",
+                    "not a variadic, which must start with either .. or any",
                 ));
             }
 
@@ -58,25 +56,25 @@ impl Parse for WildcardParam {
     }
 }
 
-impl fmt::Debug for WildcardParam {
+impl fmt::Debug for Variadic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "WildcardParam({}{})",
+            "Variadic({}{})",
             self.dots_token.as_ref().map_or("any", |_| ".."),
             self.ident
         )
     }
 }
 
-impl ToTokens for WildcardParam {
+impl ToTokens for Variadic {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let ident = &self.ident;
         tokens.append_all(quote_spanned!(ident.span() => ..#ident))
     }
 }
 
-impl fmt::Display for WildcardParam {
+impl fmt::Display for Variadic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -96,7 +94,7 @@ mod tests {
 
     #[test]
     fn test_to_tokens() {
-        let param: WildcardParam = syn::parse_quote!(..T);
+        let param: Variadic = syn::parse_quote!(..T);
 
         assert_eq!(quote!(#param).to_string(), ".. T");
     }

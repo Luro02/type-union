@@ -4,7 +4,7 @@ mod generic_type;
 mod generics;
 mod solver;
 mod template;
-mod wildcard_param;
+mod variadic;
 
 pub use either_type::*;
 pub use folder::*;
@@ -12,4 +12,4 @@ pub use generic_type::*;
 pub use generics::*;
 pub use solver::*;
 pub use template::*;
-pub use wildcard_param::*;
+pub use variadic::*;

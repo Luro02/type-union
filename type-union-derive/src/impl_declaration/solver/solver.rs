@@ -2,7 +2,7 @@ use indexmap::{IndexMap, IndexSet};
 use quote::ToTokens;
 
 use super::{SetId, TypeMapping, TypeUnionSet, UnresolvedTypeMapping};
-use crate::impl_declaration::{EitherType, GenericType, Generics, WildcardParam};
+use crate::impl_declaration::{EitherType, GenericType, Generics, Variadic};
 use crate::input::TypeUnion;
 use crate::utils::is_macro;
 
@@ -105,7 +105,7 @@ impl TypeSolver {
                 EitherType::Generic(generic) => {
                     generics.insert(generic.clone());
                 }
-                EitherType::Wildcard(variadic) => {
+                EitherType::Variadic(variadic) => {
                     variadics.insert(variadic.clone());
                 }
             }
@@ -140,7 +140,7 @@ impl TypeSolver {
         }
     }
 
-    fn set_variadic_equal_to(&mut self, variadic: WildcardParam, set: SetId) {
+    fn set_variadic_equal_to(&mut self, variadic: Variadic, set: SetId) {
         for type_union_set in self.type_union_sets.iter_mut() {
             if type_union_set.has_variadic(&variadic) {
                 type_union_set.set_variadic_equal_to(variadic.clone(), set);

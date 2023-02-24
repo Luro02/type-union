@@ -7,7 +7,7 @@ use itertools::Itertools;
 
 use super::{SetId, UnresolvedTypeMapping};
 use crate::impl_declaration::solver::InferredValue;
-use crate::impl_declaration::{GenericType, SetCollection, WildcardParam};
+use crate::impl_declaration::{GenericType, SetCollection, Variadic};
 use crate::utils::ErrorExt;
 
 /// Represents the generics and variadics of a type union.
@@ -26,7 +26,7 @@ use crate::utils::ErrorExt;
 pub struct TypeUnionSet {
     set: SetId,
     generic_types: IndexMap<GenericType, InferredValue<syn::Type>>,
-    variadics: IndexMap<WildcardParam, InferredValue<SetId>>,
+    variadics: IndexMap<Variadic, InferredValue<SetId>>,
 }
 
 pub fn iter_subsets<I, T>(iter: I) -> impl Iterator<Item = IndexSet<T>>
@@ -57,7 +57,7 @@ impl TypeUnionSet {
     pub fn new(
         set: SetId,
         generic_types: IndexSet<GenericType>,
-        variadics: IndexSet<WildcardParam>,
+        variadics: IndexSet<Variadic>,
     ) -> Self {
         Self {
             set,
@@ -351,14 +351,11 @@ impl TypeUnionSet {
             .insert(generic_type, InferredValue::Fixed(value));
     }
 
-    pub fn has_variadic(&self, variadic: &WildcardParam) -> bool {
+    pub fn has_variadic(&self, variadic: &Variadic) -> bool {
         self.variadics.contains_key(variadic)
     }
 
-    pub fn get_variadic_mut(
-        &mut self,
-        variadic: &WildcardParam,
-    ) -> Option<&mut InferredValue<SetId>> {
+    pub fn get_variadic_mut(&mut self, variadic: &Variadic) -> Option<&mut InferredValue<SetId>> {
         self.variadics.get_mut(variadic)
     }
 
@@ -366,7 +363,7 @@ impl TypeUnionSet {
     ///
     /// For example, if the variadic `..A` is known to be `(u8 | u16)`,
     /// then one would call this function to set `A` equal to that value.
-    pub fn set_variadic_equal_to(&mut self, variadic: WildcardParam, value: SetId) {
+    pub fn set_variadic_equal_to(&mut self, variadic: Variadic, value: SetId) {
         self.variadics.insert(variadic, InferredValue::Fixed(value));
     }
 

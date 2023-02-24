@@ -3,12 +3,12 @@ use std::fmt;
 use indexmap::{IndexMap, IndexSet};
 use quote::ToTokens;
 
-use crate::impl_declaration::{GenericType, WildcardParam};
+use crate::impl_declaration::{GenericType, Variadic};
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct TypeMapping {
     generic_types: IndexMap<syn::Type, syn::Type>,
-    variadic_types: IndexMap<WildcardParam, IndexSet<syn::Type>>,
+    variadic_types: IndexMap<Variadic, IndexSet<syn::Type>>,
 }
 
 impl TypeMapping {
@@ -19,7 +19,7 @@ impl TypeMapping {
         }
     }
 
-    pub fn iter_variadics(&self) -> impl Iterator<Item = (&WildcardParam, &IndexSet<syn::Type>)> {
+    pub fn iter_variadics(&self) -> impl Iterator<Item = (&Variadic, &IndexSet<syn::Type>)> {
         self.variadic_types.iter()
     }
 
@@ -27,7 +27,7 @@ impl TypeMapping {
         self.generic_types.insert(generic_type.to_type(), ty);
     }
 
-    pub fn add_variadic_type(&mut self, variadic_type: WildcardParam, ty: IndexSet<syn::Type>) {
+    pub fn add_variadic_type(&mut self, variadic_type: Variadic, ty: IndexSet<syn::Type>) {
         self.variadic_types
             .entry(variadic_type)
             .or_default()
@@ -38,13 +38,13 @@ impl TypeMapping {
         self.generic_types.get(ty)
     }
 
-    pub fn get_variadic(&self, variadic: &WildcardParam) -> Option<&IndexSet<syn::Type>> {
+    pub fn get_variadic(&self, variadic: &Variadic) -> Option<&IndexSet<syn::Type>> {
         self.variadic_types.get(variadic)
     }
 
     pub fn get_if_variadic(&self, variadic: &syn::Type) -> Option<&IndexSet<syn::Type>> {
         if let syn::Type::Path(syn::TypePath { path, .. }) = variadic {
-            if let Some(variadic) = WildcardParam::try_from_path(path) {
+            if let Some(variadic) = Variadic::try_from_path(path) {
                 return self.get_variadic(&variadic);
             }
         }
