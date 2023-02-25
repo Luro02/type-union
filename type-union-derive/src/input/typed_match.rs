@@ -95,13 +95,13 @@ impl ToTokens for TypedMatchArm<syn::Type> {
     }
 }
 
-pub struct TypeUnionMatch<T> {
+pub struct TypedMatch<T> {
     pub expr_ty: syn::ExprType,
     _brace_token: syn::token::Brace, // {}
     pub arms: Punctuated<TypedMatchArm<T>, Token![,]>,
 }
 
-impl<T> TypeUnionMatch<T> {
+impl<T> TypedMatch<T> {
     pub fn new(expr_ty: syn::ExprType) -> Self {
         Self {
             expr_ty,
@@ -123,7 +123,7 @@ impl<T> TypeUnionMatch<T> {
     }
 }
 
-impl<T: ToTokens> TypeUnionMatch<T> {
+impl<T: ToTokens> TypedMatch<T> {
     #[must_use]
     pub fn into_macro_tokens(self) -> TokenStream {
         let mut result = TokenStream::new();
@@ -146,7 +146,7 @@ impl<T: ToTokens> TypeUnionMatch<T> {
     }
 }
 
-impl<T> Parse for TypeUnionMatch<T>
+impl<T> Parse for TypedMatch<T>
 where
     TypedMatchArm<T>: Parse,
 {
@@ -160,7 +160,7 @@ where
     }
 }
 
-impl ToTokens for TypeUnionMatch<syn::Type> {
+impl ToTokens for TypedMatch<syn::Type> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let expr = &self.expr_ty.expr;
         let ty = &self.expr_ty.ty;

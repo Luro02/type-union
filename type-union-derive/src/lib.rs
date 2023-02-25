@@ -66,7 +66,7 @@ pub fn type_union(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// ```
 #[proc_macro]
 pub fn match_type_union(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let input = parse_macro_input!(input as input::TypeUnionMatch<syn::Type>);
+    let input = parse_macro_input!(input as input::TypedMatch<syn::Type>);
 
     quote!(#input).into()
 }

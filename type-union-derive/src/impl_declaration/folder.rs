@@ -5,7 +5,7 @@ use syn::parse::ParseStream;
 use syn::Token;
 
 use crate::impl_declaration::{EitherType, Generics, TypeMapping};
-use crate::input::{TypeSignature, TypeUnion, TypeUnionMatch};
+use crate::input::{TypeSignature, TypeUnion, TypedMatch};
 use crate::utils::{is_macro, resolve_type_name, PunctuatedExt};
 
 pub struct Folder<'a> {
@@ -118,9 +118,9 @@ impl<'a> Fold for Folder<'a> {
         }
 
         if is_macro(&mac, "match_type_union") {
-            if let Ok(type_union_match) = mac.parse_body::<TypeUnionMatch<EitherType>>() {
+            if let Ok(type_union_match) = mac.parse_body::<TypedMatch<EitherType>>() {
                 let folded_expr = self.fold_expr_type(type_union_match.expr_ty);
-                let mut result: TypeUnionMatch<syn::Type> = TypeUnionMatch::new(folded_expr);
+                let mut result: TypedMatch<syn::Type> = TypedMatch::new(folded_expr);
 
                 for arm in type_union_match.arms {
                     match &arm.ty {
