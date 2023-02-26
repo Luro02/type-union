@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::fold::Fold;
@@ -109,28 +107,13 @@ impl Template {
         }
 
         let mut impls = Vec::new();
-
         for type_mapping in solver.solve()? {
-            let mut folder = Folder {
-                extra_mapping: HashMap::new(),
-                type_mapping,
-                errors: Vec::new(),
-                trait_path: &self.trait_path(),
-                signature: &concrete_signature,
-                generics: &self.generics,
-            };
+            let mut folder = Folder::new(type_mapping, &concrete_signature, &self.generics);
 
             let item_impl = folder.fold_item_impl(self.item_impl.clone());
 
-            // if an error occured, combine all errors into one and return it
-            let mut errors = folder.errors.into_iter();
-            if let Some(mut error) = errors.next() {
-                for err in errors {
-                    error.combine(err);
-                }
-
-                return Err(error);
-            }
+            // if an error occured while folding, emit it:
+            folder.error_if_present()?;
 
             impls.push(item_impl);
         }

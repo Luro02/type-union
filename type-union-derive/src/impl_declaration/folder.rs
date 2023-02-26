@@ -6,15 +6,39 @@ use syn::Token;
 
 use crate::impl_declaration::{EitherType, Generics, TypeMapping};
 use crate::input::{TypeSignature, TypeUnion, TypedMatch};
-use crate::utils::{is_macro, resolve_type_name, PunctuatedExt};
+use crate::utils::{is_macro, resolve_type_name, ErrorExt, PunctuatedExt};
 
 pub struct Folder<'a> {
-    pub extra_mapping: HashMap<syn::Type, syn::Type>,
-    pub type_mapping: TypeMapping,
-    pub errors: Vec<syn::Error>,
-    pub trait_path: &'a syn::Path,
-    pub signature: &'a TypeSignature,
-    pub generics: &'a Generics,
+    extra_mapping: HashMap<syn::Type, syn::Type>,
+    type_mapping: TypeMapping,
+    errors: Vec<syn::Error>,
+    signature: &'a TypeSignature,
+    generics: &'a Generics,
+}
+
+impl<'a> Folder<'a> {
+    pub fn new(
+        type_mapping: TypeMapping,
+        signature: &'a TypeSignature,
+        generics: &'a Generics,
+    ) -> Self {
+        Self {
+            extra_mapping: HashMap::new(),
+            type_mapping,
+            errors: Vec::new(),
+            signature,
+            generics,
+        }
+    }
+
+    pub fn error_if_present(self) -> syn::Result<()> {
+        let mut errors = self.errors.into_iter();
+        if let Some(error) = errors.next() {
+            return Err(error.combine_all(errors));
+        }
+
+        Ok(())
+    }
 }
 
 fn parse_promote_macro(mac: &syn::Macro, folder: &mut dyn Fold) -> syn::Result<syn::Expr> {
