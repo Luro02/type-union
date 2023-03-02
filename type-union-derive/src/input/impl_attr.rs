@@ -4,9 +4,9 @@ use syn::punctuated::Punctuated;
 use syn::Token;
 
 use crate::input::TypeSignature;
-use crate::utils::LooksLike;
+use crate::utils::{Context, ErrorExt, LooksLike};
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ImplAttr {
     _pound_token: Token![#],
     _bracket_token: syn::token::Bracket,
@@ -38,7 +38,27 @@ impl ImplAttr {
         ("PartialEq", "::core::cmp::PartialEq"),
     ];
 
-    pub fn get_traits<'a, 'b>(
+    fn resolve(&mut self, current_ty: syn::Type, new_ty: syn::Type) -> syn::Result<()> {
+        let mut errors = Vec::new();
+        for item in &mut self.implements {
+            if let Err(e) = item.resolve(current_ty.clone(), new_ty.clone()) {
+                errors.push(e);
+            }
+        }
+
+        let mut errors = errors.into_iter();
+        if let Some(first) = errors.next() {
+            return Err(first.combine_all(errors));
+        }
+
+        Ok(())
+    }
+
+    pub fn resolve_self(&mut self, new_ty: syn::Type) -> syn::Result<()> {
+        self.resolve(syn::parse_quote!(Self), new_ty)
+    }
+
+    fn get_traits<'a, 'b>(
         &'a self,
         path: &'b syn::Path,
     ) -> impl Iterator<Item = &'a TypeSignature> + 'b
@@ -50,9 +70,27 @@ impl ImplAttr {
             .filter(move |item| item.looks_like(path))
     }
 
+    pub fn get_traits_with<'a, 'b>(
+        &'a self,
+        path: &'b TypeSignature,
+        ctx: &'b dyn Context,
+    ) -> impl Iterator<Item = &'a TypeSignature> + 'b
+    where
+        'a: 'b,
+    {
+        self.implements
+            .iter()
+            .filter(move |item| item.looks_like_with(path, ctx))
+    }
+
     #[must_use]
-    pub fn has_trait(&self, ty: &syn::Path) -> bool {
+    fn has_trait(&self, ty: &syn::Path) -> bool {
         self.get_traits(ty).next().is_some()
+    }
+
+    #[must_use]
+    pub fn has_trait_with(&self, ty: &TypeSignature, ctx: &dyn Context) -> bool {
+        self.get_traits_with(ty, ctx).next().is_some()
     }
 
     #[must_use]
@@ -88,6 +126,35 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
+    fn test_resolve_self_has_trait() {
+        let mut impl_attr: ImplAttr = syn::parse_quote! {
+            #[impl(Copy)]
+        };
+
+        assert!(impl_attr.has_trait(&syn::parse_quote!(Copy)));
+
+        impl_attr
+            .resolve_self(syn::parse_quote!(type_union!(u8 | u16)))
+            .unwrap();
+
+        assert!(impl_attr.has_trait(&syn::parse_quote!(Copy)));
+    }
+
+    #[test]
+    fn test_derive() {
+        let impl_attr: ImplAttr = syn::parse_quote! {
+            #[impl(Copy, Clone, Debug, PartialEq)]
+        };
+
+        assert_eq!(
+            impl_attr.derives(),
+            Some(syn::parse_quote! {
+                #[derive(::core::marker::Copy, ::core::clone::Clone, ::core::fmt::Debug, ::core::cmp::PartialEq)]
+            })
+        );
+    }
+
+    #[test]
     fn test_get_traits() {
         let attr: ImplAttr = syn::parse_quote! {
             #[impl(Copy, PartialEq, PartialEq<u8>)]
@@ -117,10 +184,17 @@ mod tests {
             vec![&syn::parse_quote!(PartialEq<u8>)]
         );
 
+        let ctx: syn::Generics = syn::parse_quote!(<T>);
+        assert_eq!(
+            attr.get_traits_with(&syn::parse_quote!(::core::cmp::PartialEq<T>), &ctx)
+                .collect::<Vec<_>>(),
+            vec![&syn::parse_quote!(PartialEq<u8>)]
+        );
+
         assert_eq!(
             attr.get_traits(&syn::parse_quote!(::core::cmp::PartialEq<T>))
                 .collect::<Vec<_>>(),
-            vec![&syn::parse_quote!(PartialEq<u8>)]
+            Vec::<&TypeSignature>::new(),
         );
 
         assert_eq!(
@@ -156,14 +230,9 @@ mod tests {
             vec![&syn::parse_quote!(PartialEq<u8>)]
         );
 
+        let ctx: syn::Generics = syn::parse_quote!(<T, U>);
         assert_eq!(
-            attr.get_traits(&syn::parse_quote!(::core::cmp::PartialEq<T>))
-                .collect::<Vec<_>>(),
-            vec![&syn::parse_quote!(PartialEq<u8>)]
-        );
-
-        assert_eq!(
-            attr.get_traits(&syn::parse_quote!(::core::cmp::PartialEq<T, U>))
+            attr.get_traits_with(&syn::parse_quote!(::core::cmp::PartialEq<T, U>), &ctx)
                 .collect::<Vec<_>>(),
             Vec::<&TypeSignature>::new()
         );
@@ -175,8 +244,9 @@ mod tests {
             #[impl(PartialEq<u8>, PartialEq<u64>, PartialEq<String>, PartialEq<type_union!(u8 | u64)>)]
         };
 
+        let ctx: syn::Generics = syn::parse_quote!(<T>);
         assert_eq!(
-            attr.get_traits(&syn::parse_quote!(::core::cmp::PartialEq<T>))
+            attr.get_traits_with(&syn::parse_quote!(::core::cmp::PartialEq<T>), &ctx)
                 .collect::<Vec<_>>(),
             vec![
                 &syn::parse_quote!(PartialEq<u8>),
@@ -196,5 +266,43 @@ mod tests {
             attr.has_trait(&syn::parse_quote!(::core::iter::Iterator)),
             true
         );
+    }
+
+    // TODO: better fn name
+    #[test]
+    fn test_buggy() {
+        let mut impl_attr: ImplAttr = syn::parse_quote!(#[impl(TryFrom<Self> for MyWrapper<Self>)]);
+        impl_attr
+            .resolve(
+                syn::parse_quote!(Self),
+                syn::parse_quote!(type_union!(u8 | u16 | u32)),
+            )
+            .unwrap();
+        let signature = TypeSignature::new(
+            syn::parse_quote!(TryFrom<type_union!(..A)>),
+            Some(syn::parse_quote!(MyWrapper<type_union!(..A)>)),
+        )
+        .unwrap();
+
+        let ctx: syn::Generics = syn::parse_quote!(<anyA>);
+
+        assert_eq!(impl_attr.has_trait_with(&signature, &ctx), true);
+
+        let mut impl_attr: ImplAttr = syn::parse_quote!(#[impl(Display)]);
+        let ctx: syn::Generics = syn::parse_quote!(<anyT>);
+        let signature = TypeSignature::new(
+            syn::parse_quote!(::core::fmt::Display),
+            Some(syn::parse_quote!(type_union!(anyT))),
+        )
+        .unwrap();
+
+        impl_attr
+            .resolve(
+                syn::parse_quote!(Self),
+                syn::parse_quote!(type_union!(u8 | u16 | u32)),
+            )
+            .unwrap();
+
+        assert_eq!(impl_attr.has_trait_with(&signature, &ctx), true);
     }
 }

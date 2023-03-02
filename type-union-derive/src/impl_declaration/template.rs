@@ -2,10 +2,10 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::fold::Fold;
 use syn::parse::{Parse, ParseStream};
-use syn::Token;
 
 use crate::impl_declaration::{Folder, Generics, TypeSolver};
-use crate::input::{TypeSignature, TypeUnion};
+use crate::input::{ImplAttr, TypeSignature, TypeUnion};
+use crate::utils::{Context, LooksLike};
 
 /// Represents an implementation of a trait for a type union.
 #[derive(Debug, Clone)]
@@ -13,7 +13,6 @@ pub struct Template {
     self_ty: syn::Type,
     item_impl: syn::ItemImpl,
     generics: Generics,
-    trait_: (Option<Token![!]>, syn::Path, Token![for]),
     signature: TypeSignature,
 }
 
@@ -92,9 +91,22 @@ impl Template {
         ]
     }
 
-    /// Returns the name of the trait that is implemented.
-    pub fn trait_path(&self) -> &syn::Path {
-        &self.trait_.1
+    #[must_use]
+    fn context(&self) -> &dyn Context {
+        &self.generics
+    }
+
+    /// Checks if this template overrides the provided template.
+    #[must_use]
+    pub fn does_override(&self, other: &Self) -> bool {
+        self.signature
+            .looks_like_with(&other.signature, &(self.context(), &other.generics))
+    }
+
+    /// Check if the template can be applied to the given type union.
+    #[must_use]
+    pub fn does_apply(&self, _type_union: &TypeUnion<syn::Type>, impl_attr: &ImplAttr) -> bool {
+        impl_attr.has_trait_with(&self.signature, self.context())
     }
 
     fn try_apply_args(
@@ -121,21 +133,24 @@ impl Template {
         Ok(impls)
     }
 
-    pub fn try_apply<'a, I>(
+    pub fn try_apply(
         &self,
+        // the type union for which the impl should be generated
         type_union: &TypeUnion<syn::Type>,
-        traits: I,
-    ) -> syn::Result<TokenStream>
-    where
-        I: IntoIterator<Item = &'a TypeSignature>,
-    {
-        let mut solver = TypeSolver::new(self.generics.clone());
-
-        solver.add_type_constraint(&self.self_ty, &type_union.to_macro_type())?;
-
+        impl_attr: &ImplAttr,
+    ) -> syn::Result<TokenStream> {
         let mut impls = Vec::new();
-        for args in traits {
-            impls.extend(self.try_apply_args(solver.clone(), args)?);
+
+        for signature in impl_attr.get_traits_with(&self.signature, self.context()) {
+            let mut solver = TypeSolver::new(self.generics.clone());
+
+            let declaration = signature
+                .self_ty()
+                .cloned()
+                .unwrap_or_else(|| type_union.to_macro_type());
+            solver.add_type_constraint(&self.self_ty, &declaration)?;
+
+            impls.extend(self.try_apply_args(solver, signature)?);
         }
 
         Ok(quote!(#(#impls)*))
@@ -156,18 +171,17 @@ impl Parse for Template {
         // TODO: check for correct constraints on generics?
         // TODO: check that all generics are used and declared correctly?
 
-        let Some((_bang, path, _for)) = item_impl.trait_.clone() else {
+        let Some((_, trait_path, _)) = item_impl.trait_.clone() else {
             return Err(syn::Error::new_spanned(
                 &item_impl , "at the moment only trait impls are supported"
             ));
         };
 
-        let signature = TypeSignature::try_from(path.clone())?;
+        let signature = TypeSignature::new(trait_path, Some(self_ty.clone()))?;
 
         Ok(Self {
             self_ty,
             item_impl,
-            trait_: (_bang, path, _for),
             generics,
             signature,
         })

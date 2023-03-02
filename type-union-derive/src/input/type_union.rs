@@ -90,6 +90,10 @@ impl<T: Type> TypeUnion<T> {
         Ok(())
     }
 
+    pub fn remove_parens(&mut self) {
+        self._paren_token = None;
+    }
+
     #[must_use]
     pub fn span(&self) -> Span {
         self.punctuated.span()

@@ -2,9 +2,9 @@ use indexmap::{IndexMap, IndexSet};
 use quote::ToTokens;
 
 use super::{SetId, TypeMapping, TypeUnionSet, UnresolvedTypeMapping};
-use crate::impl_declaration::{EitherType, GenericType, Generics, Variadic};
+use crate::impl_declaration::{EitherType, GenericType, Generics};
 use crate::input::TypeUnion;
-use crate::utils::{is_macro, LooksLike};
+use crate::utils::{is_macro, Context, LooksLike};
 
 #[derive(Debug, Clone)]
 pub struct TypeSolver {
@@ -12,6 +12,7 @@ pub struct TypeSolver {
     next_set_id: usize,
     generics: Generics,
     type_union_sets: Vec<TypeUnionSet>,
+    generic_type_values: IndexMap<GenericType, syn::Type>,
 }
 
 pub trait SetCollection {
@@ -63,6 +64,7 @@ impl TypeSolver {
             next_set_id: 0,
             generics,
             type_union_sets: Vec::new(),
+            generic_type_values: IndexMap::new(),
         }
     }
 
@@ -124,28 +126,12 @@ impl TypeSolver {
 
         self.add_type_union_set(TypeUnionSet::new(set, generics.clone(), variadics.clone()));
 
-        if variadics.len() == 1 {
-            // if there is only one variadic, it must be equal to the concrete type set
-            self.set_variadic_equal_to(variadics.into_iter().next().unwrap(), set);
-        }
-
         Ok(())
     }
 
+    /// Sets the generic type equal to the given type.
     fn set_generic_type_equal_to(&mut self, generic: GenericType, ty: syn::Type) {
-        for type_union_set in self.type_union_sets.iter_mut() {
-            if type_union_set.has_generic_type(&generic) {
-                type_union_set.set_generic_type_equal_to(generic.clone(), ty.clone());
-            }
-        }
-    }
-
-    fn set_variadic_equal_to(&mut self, variadic: Variadic, set: SetId) {
-        for type_union_set in self.type_union_sets.iter_mut() {
-            if type_union_set.has_variadic(&variadic) {
-                type_union_set.set_variadic_equal_to(variadic.clone(), set);
-            }
-        }
+        self.generic_type_values.insert(generic, ty);
     }
 
     pub fn add_type_constraint(
@@ -163,7 +149,16 @@ impl TypeSolver {
 
                 self.add_union_constraint(&templ_type_union, &decl_type_union)?;
             }
-            // TODO: support constraining a generic to a concrete type (e.g. `T = u8`)
+            // check if one of the types is a generic (e.g. T, A, B, C), then the generic must be equal
+            // to the other type
+            (syn::Type::Path(syn::TypePath { path, qself: None }), other)
+            | (other, syn::Type::Path(syn::TypePath { path, qself: None }))
+                if self.generics.is_generic(path) =>
+            {
+                let generic = self.generics.get_generic(path).unwrap();
+
+                self.set_generic_type_equal_to(generic, other.clone());
+            }
             (
                 syn::Type::Path(syn::TypePath {
                     path: templ_path, ..
@@ -224,9 +219,18 @@ impl TypeSolver {
     }
 
     pub fn solve(mut self) -> syn::Result<Vec<TypeMapping>> {
-        let mut unresolved_type_mapping = UnresolvedTypeMapping::new();
-
         let mut sets = self.type_union_sets.clone();
+
+        for set in &mut sets {
+            for (generic, ty) in self.generic_type_values.clone() {
+                if !set.has_generic_type(&generic) {
+                    continue;
+                }
+
+                set.set_generic_type_equal_to(generic, ty);
+            }
+        }
+
         for i in 0..sets.len() {
             let mut others = sets;
             let mut set = others.remove(i);
@@ -234,6 +238,8 @@ impl TypeSolver {
             others.insert(i, set);
             sets = others;
         }
+
+        let mut unresolved_type_mapping = UnresolvedTypeMapping::new();
 
         for type_union_set in sets {
             let type_mapping = type_union_set.solve(|id| self.get_set(&id).clone())?;
@@ -596,5 +602,79 @@ mod tests {
                 },
             },]
         )
+    }
+
+    #[test]
+    fn test_solve_impl_on_variant() {
+        // impl<T, anyA> TryFrom<(T | ..A)> for T {
+        // with TryFrom<(u8 | u16 | u32)> for u8
+        let mut solver = TypeSolver::new(Generics::new(syn::parse_quote!(<T, anyA>)));
+
+        solver
+            .add_union_constraint(
+                &syn::parse_quote!(T | ..A),
+                &syn::parse_quote!(u8 | u16 | u32),
+            )
+            .unwrap();
+
+        solver
+            .add_type_constraint(&syn::parse_quote!(T), &syn::parse_quote!(u8))
+            .unwrap();
+
+        // T must be u8 => ..A = (u16 | u32)
+
+        assert_eq!(
+            solver.solve().unwrap(),
+            vec![type_mapping! {
+                types => {
+                    syn::parse_quote!(T) => syn::parse_quote!(u8),
+                },
+                variadics => {
+                    syn::parse_quote!(..A) => indexset! {
+                        syn::parse_quote!(u16),
+                        syn::parse_quote!(u32),
+                    },
+                },
+            },]
+        );
+    }
+
+    /// This is the same as [`test_solve_impl_on_variant`], but the order of the
+    /// constraints are reversed.
+    ///
+    /// So first the constraint `T = u8` is added, and then `(T | ..A) = (u8 | u16 | u32)`
+    #[test]
+    fn test_solve_impl_on_variant_reverse() {
+        // impl<T, anyA> TryFrom<(T | ..A)> for T {
+        // with TryFrom<(u8 | u16 | u32)> for u8
+        let mut solver = TypeSolver::new(Generics::new(syn::parse_quote!(<T, anyA>)));
+
+        solver
+            .add_type_constraint(&syn::parse_quote!(T), &syn::parse_quote!(u8))
+            .unwrap();
+
+        solver
+            .add_union_constraint(
+                &syn::parse_quote!(T | ..A),
+                &syn::parse_quote!(u8 | u16 | u32),
+            )
+            .unwrap();
+
+        // T must be u8 => ..A = (u16 | u32)
+
+        assert_eq!(
+            solver.solve().unwrap(),
+            vec![type_mapping! {
+                types => {
+                    syn::parse_quote!(T) => syn::parse_quote!(u8),
+                },
+                variadics => {
+                    syn::parse_quote!(..A) => indexset! {
+                        syn::parse_quote!(u16),
+                        syn::parse_quote!(u32),
+                    },
+                },
+            },]
+        );
     }
 }

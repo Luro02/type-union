@@ -7,6 +7,7 @@ fn test() {
     t.pass("tests/ui/iterator.rs");
     t.pass("tests/ui/iterator-type-union-item.rs");
     t.pass("tests/ui/iterator-default-item.rs");
+    // t.pass("tests/ui/impl-non-type-union.rs");
     // t.pass("tests/ui/partial-eq-type-union.rs");
     // t.compile_fail("tests/ui/compile-fail-3.rs");
 }

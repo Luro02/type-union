@@ -6,7 +6,7 @@ use itertools::Itertools;
 use super::{IndexMapExt, TypeMapping};
 use crate::impl_declaration::{GenericType, Variadic};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct UnresolvedTypeMapping {
     generic_types: IndexMap<GenericType, IndexSet<syn::Type>>,
     variadics: IndexMap<Variadic, IndexSet<syn::Type>>,
@@ -79,6 +79,7 @@ impl UnresolvedTypeMapping {
 
     pub fn resolve(&self) -> Vec<TypeMapping> {
         let mut result = Vec::new();
+        // TODO: what happens if there are no generic types?
         for combination in combinations(self.generic_types.clone()) {
             let mut type_mapping = TypeMapping::new();
 
@@ -96,5 +97,55 @@ impl UnresolvedTypeMapping {
         }
 
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use indexmap::indexset;
+    use pretty_assertions::assert_eq;
+
+    // TODO: copy-paste from solver.rs (share this code)
+    macro_rules! type_mapping {
+        ( types => { $( $left_ty:expr => $right_ty:expr ),* $(,)? }, variadics => { $( $left_var:expr => $right_var:expr ),* $(,)? } $(,)? ) => {
+            {
+                let mut _mapping = TypeMapping::new();
+
+                $(
+                    _mapping.add_generic_type($left_ty, $right_ty);
+                )*
+
+                $(
+                    _mapping.add_variadic_type($left_var, $right_var);
+                )*
+
+                _mapping
+            }
+        };
+    }
+
+    #[test]
+    fn test_resolve() {
+        let mut mapping = UnresolvedTypeMapping::new();
+
+        mapping.add_generic_type(syn::parse_quote!(T), indexset! { syn::parse_quote!(u8) });
+        mapping.add_variadic_type(
+            syn::parse_quote!(..A),
+            indexset! { syn::parse_quote!(u16), syn::parse_quote!(u32) },
+        );
+
+        assert_eq!(
+            mapping.resolve(),
+            vec![type_mapping! {
+                types => {
+                    syn::parse_quote!(T) => syn::parse_quote!(u8),
+                },
+                variadics => {
+                    syn::parse_quote!(..A) => indexset! { syn::parse_quote!(u16), syn::parse_quote!(u32) },
+                },
+            }]
+        );
     }
 }

@@ -29,11 +29,15 @@ impl TypeUnionDefinition {
     pub fn type_union(&self) -> &TypeUnion<syn::Type> {
         &self.type_union
     }
+
+    fn resolve_self(&mut self) -> syn::Result<()> {
+        self.impl_attr.resolve_self(self.type_union.to_macro_type())
+    }
 }
 
 impl Parse for TypeUnionDefinition {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        Ok(Self {
+        let mut result = Self {
             impl_attr: {
                 if input.peek(Token![#]) {
                     input.parse()?
@@ -44,14 +48,19 @@ impl Parse for TypeUnionDefinition {
             _enum_token: input.parse()?,
             ident: input.parse()?,
             type_union: {
-                let result: TypeUnion<syn::Type> = input.parse()?;
+                let mut result: TypeUnion<syn::Type> = input.parse()?;
 
                 // ensure that the TypeUnion is wrapped in `()`
                 result.has_parens_or_err()?;
+                result.remove_parens();
 
                 result
             },
-        })
+        };
+
+        result.resolve_self()?;
+
+        Ok(result)
     }
 }
 
@@ -84,5 +93,38 @@ impl ToTokens for TypeUnionDefinition {
                 }
             )*
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_derive() {
+        let definition: TypeUnionDefinition = syn::parse_quote! {
+            #[impl(Debug, Copy, Clone, PartialEq)]
+            enum (u8 | u16)
+        };
+
+        let mut impl_attr: ImplAttr = syn::parse_quote! {
+            #[impl(Debug, Copy, Clone, PartialEq)]
+        };
+
+        impl_attr
+            .resolve_self(syn::parse_quote!(type_union!(u8 | u16)))
+            .unwrap();
+
+        assert_eq!(definition.impl_attr(), &impl_attr);
+
+        assert_eq!(definition.impl_attr().derives(), impl_attr.derives());
+        assert_eq!(
+            definition.impl_attr().derives(),
+            Some(
+                syn::parse_quote!(#[derive(::core::marker::Copy, ::core::clone::Clone, ::core::fmt::Debug, ::core::cmp::PartialEq)])
+            )
+        );
     }
 }

@@ -2,6 +2,7 @@ use indexmap::IndexMap;
 
 use crate::impl_declaration::{EitherType, GenericType, Variadic};
 use crate::input::TypeUnion;
+use crate::utils::Context;
 
 /// Represents all declared generics and their bounds.
 #[derive(Debug, Clone)]
@@ -85,6 +86,12 @@ impl Generics {
 
             EitherType::Concrete(ty)
         })
+    }
+}
+
+impl Context for Generics {
+    fn is_generic(&self, path: &syn::Path) -> bool {
+        self.get_generic(path).is_some()
     }
 }
 

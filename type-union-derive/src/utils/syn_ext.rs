@@ -4,6 +4,34 @@ use quote::ToTokens;
 use syn::parse::{Parse, ParseBuffer, ParseStream, Peek};
 use syn::punctuated::Punctuated;
 
+pub trait PathLike {
+    #[must_use]
+    fn get_ident(&self) -> Option<&syn::Ident>;
+
+    #[must_use]
+    fn into_path(self) -> syn::Path;
+}
+
+impl PathLike for syn::Path {
+    fn get_ident(&self) -> Option<&syn::Ident> {
+        syn::Path::get_ident(self)
+    }
+
+    fn into_path(self) -> syn::Path {
+        self
+    }
+}
+
+impl PathLike for syn::Ident {
+    fn get_ident(&self) -> Option<&syn::Ident> {
+        Some(self)
+    }
+
+    fn into_path(self) -> syn::Path {
+        syn::Path::from(self)
+    }
+}
+
 pub trait ErrorExt {
     #[must_use]
     fn with_spans<I>(self, spans: I) -> Self

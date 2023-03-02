@@ -1,9 +1,11 @@
 use std::assert_matches::debug_assert_matches;
 use std::hash::Hash;
+use std::mem;
 
 use indexmap::indexset;
 use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
+use quote::ToTokens;
 
 use super::{SetId, UnresolvedTypeMapping};
 use crate::impl_declaration::solver::InferredValue;
@@ -59,7 +61,7 @@ impl TypeUnionSet {
         generic_types: IndexSet<GenericType>,
         variadics: IndexSet<Variadic>,
     ) -> Self {
-        Self {
+        let mut result = Self {
             set,
             generic_types: generic_types
                 .into_iter()
@@ -69,6 +71,20 @@ impl TypeUnionSet {
                 .into_iter()
                 .map(|k| (k, InferredValue::Unknown))
                 .collect(),
+        };
+
+        result.resolve();
+
+        result
+    }
+
+    fn resolve(&mut self) {
+        // TODO: add more inferences?
+        if self.variadics.len() == 1 && self.generic_types.is_empty() {
+            self.variadics = mem::take(&mut self.variadics)
+                .into_iter()
+                .map(|(variadic, _)| (variadic, InferredValue::Fixed(self.set)))
+                .collect();
         }
     }
 
@@ -351,20 +367,8 @@ impl TypeUnionSet {
             .insert(generic_type, InferredValue::Fixed(value));
     }
 
-    pub fn has_variadic(&self, variadic: &Variadic) -> bool {
-        self.variadics.contains_key(variadic)
-    }
-
     pub fn get_variadic_mut(&mut self, variadic: &Variadic) -> Option<&mut InferredValue<SetId>> {
         self.variadics.get_mut(variadic)
-    }
-
-    /// Call this function when the variadic is equal to a known set.
-    ///
-    /// For example, if the variadic `..A` is known to be `(u8 | u16)`,
-    /// then one would call this function to set `A` equal to that value.
-    pub fn set_variadic_equal_to(&mut self, variadic: Variadic, value: SetId) {
-        self.variadics.insert(variadic, InferredValue::Fixed(value));
     }
 
     pub fn solve(
@@ -421,6 +425,7 @@ impl TypeUnionSet {
 
             for ty in &tys {
                 if !types.contains(ty) {
+                    eprintln!("ty: {}", ty.to_token_stream().to_string());
                     return Err(syn::Error::new_spanned(
                         ty,
                         format!("type is not possible for the variadic `{variadic}`"),
@@ -451,5 +456,99 @@ impl TypeUnionSet {
         }
 
         Ok(type_mapping)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_solve_1() {
+        // SetId = (u8 | u16 | u32)
+        let base_set_id = SetId::default();
+        let mut type_union_set = TypeUnionSet::new(
+            base_set_id,
+            indexset! { syn::parse_quote!(T) },
+            indexset! { syn::parse_quote!(..A) },
+        );
+
+        // now set the T = u8:
+        type_union_set.set_generic_type_equal_to(syn::parse_quote!(T), syn::parse_quote!(u8));
+
+        // because T is fixed to u8, the only valid mapping is:
+        // T = u8, A = (u16 | u32)
+
+        let mut expected = UnresolvedTypeMapping::new();
+
+        expected.add_generic_type(syn::parse_quote!(T), indexset! { syn::parse_quote!(u8) });
+        expected.add_variadic_type(
+            syn::parse_quote!(..A),
+            indexset! { syn::parse_quote!(u16), syn::parse_quote!(u32) },
+        );
+
+        assert_eq!(
+            type_union_set
+                .solve(|_| indexset! { syn::parse_quote!(u8), syn::parse_quote!(u16), syn::parse_quote!(u32) })
+                .unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn test_solve_variadic_must_be_base_set() {
+        // SetId = (u8 | u16 | u32)
+        let base_set_id = SetId::default();
+        let type_union_set = TypeUnionSet::new(
+            base_set_id,
+            indexset! {},
+            indexset! { syn::parse_quote!(..A) },
+        );
+
+        let mut expected = UnresolvedTypeMapping::new();
+
+        expected.add_variadic_type(
+            syn::parse_quote!(..A),
+            indexset! { syn::parse_quote!(u8), syn::parse_quote!(u16), syn::parse_quote!(u32) },
+        );
+
+        assert_eq!(
+            type_union_set
+                .solve(|_| indexset! { syn::parse_quote!(u8), syn::parse_quote!(u16), syn::parse_quote!(u32) })
+                .unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn test_solve_generic() {
+        // SetId = (u8 | u16 | u32)
+        let base_set_id = SetId::default();
+        let mut type_union_set = TypeUnionSet::new(
+            base_set_id,
+            indexset! { syn::parse_quote!(T) },
+            indexset! { syn::parse_quote!(..A) },
+        );
+
+        type_union_set.set_generic_type_equal_to(
+            syn::parse_quote!(T),
+            syn::parse_quote!(MyWrapper<type_union!(u8 | u16 | u32)>),
+        );
+
+        let mut expected = UnresolvedTypeMapping::new();
+
+        expected.add_variadic_type(
+            syn::parse_quote!(..A),
+            indexset! { syn::parse_quote!(u8), syn::parse_quote!(u16), syn::parse_quote!(u32) },
+        );
+
+        assert_eq!(
+            type_union_set
+                .solve(|_| indexset! { syn::parse_quote!(u8), syn::parse_quote!(u16), syn::parse_quote!(u32) })
+                .unwrap(),
+            expected
+        );
     }
 }

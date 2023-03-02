@@ -20,6 +20,7 @@ pub fn define_type_union(input: proc_macro::TokenStream) -> proc_macro::TokenStr
     quote!(#input).into()
 }
 
+// TODO: smarter algorithm needed to determine if a template can be applied to a type union
 // TODO: rename match_type_union to typed_match?
 
 /// This macro expands to the type of the union.

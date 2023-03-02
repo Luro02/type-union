@@ -6,7 +6,7 @@ use syn::Token;
 
 use crate::impl_declaration::Template;
 use crate::input::TypeUnionDefinition;
-use crate::utils::{ErrorExt, LooksLike, PeekAfter};
+use crate::utils::{ErrorExt, PeekAfter};
 
 enum Definition {
     Declaration(TypeUnionDefinition),
@@ -47,9 +47,9 @@ impl DefineTypeUnion {
     ///
     /// Returns `true` if the given path would override an `impl`, otherwise `false`.
     #[must_use]
-    fn overrides_impl(&self, path: &syn::Path) -> bool {
+    fn overrides_impl(&self, trait_impl: &Template) -> bool {
         self.impls()
-            .any(|trait_impl| trait_impl.trait_path().looks_like(path))
+            .any(|template| trait_impl.does_override(template))
     }
 }
 
@@ -72,18 +72,15 @@ impl ToTokens for DefineTypeUnion {
         let mut errors = Vec::new();
         let mut templates = Template::built_in_impls();
 
-        templates.retain(|trait_impl| !self.overrides_impl(trait_impl.trait_path()));
+        templates.retain(|trait_impl| !self.overrides_impl(trait_impl));
 
         for trait_impl in templates.iter().chain(self.impls()) {
-            for decl in self.declarations() {
-                if !decl.impl_attr().has_trait(trait_impl.trait_path()) {
-                    continue;
-                }
-
-                match trait_impl.try_apply(
-                    decl.type_union(),
-                    decl.impl_attr().get_traits(trait_impl.trait_path()),
-                ) {
+            for decl in self
+                .declarations()
+                // skip all decls for which the trait does not apply
+                .filter(|decl| trait_impl.does_apply(decl.type_union(), decl.impl_attr()))
+            {
+                match trait_impl.try_apply(decl.type_union(), decl.impl_attr()) {
                     Ok(output) => {
                         errors.clear();
                         tokens.append_all(output);

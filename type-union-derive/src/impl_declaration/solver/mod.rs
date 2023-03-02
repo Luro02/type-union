@@ -14,7 +14,7 @@ use indexmap::{IndexMap, IndexSet};
 use std::hash::Hash;
 use std::ops::{Add, AddAssign};
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Default)]
 pub struct SetId {
     id: usize,
 }
