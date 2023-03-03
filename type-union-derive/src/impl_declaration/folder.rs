@@ -77,9 +77,15 @@ impl<'a> Fold for Folder<'a> {
         // The type of A::Item is not known, but A is not in the final code. So as a fallback
         // add a mapping of A to the first possible type of ..A.
         // TODO: this will be very inefficient
+        let mut skip_later = Vec::new();
         for (variadic, possible_values) in self.type_mapping.iter_variadics() {
             let ident = variadic.ident();
             let value = possible_values.iter().next().unwrap();
+
+            if self.extra_mapping.contains_key(&syn::parse_quote!(#ident)) {
+                skip_later.push(ident.clone());
+                continue;
+            }
 
             self.extra_mapping
                 .insert(syn::parse_quote! { #ident }, syn::parse_quote!(#value));
@@ -89,6 +95,10 @@ impl<'a> Fold for Folder<'a> {
 
         for (variadic, _) in self.type_mapping.iter_variadics() {
             let ident = variadic.ident();
+
+            if skip_later.contains(ident) {
+                continue;
+            }
 
             self.extra_mapping.remove(&syn::parse_quote!(#ident));
         }
@@ -146,7 +156,8 @@ impl<'a> Fold for Folder<'a> {
                 let folded_expr = self.fold_expr_type(type_union_match.expr_ty);
                 let mut result: TypedMatch<syn::Type> = TypedMatch::new(folded_expr);
 
-                for arm in type_union_match.arms {
+                for mut arm in type_union_match.arms {
+                    arm.body = self.fold_expr(arm.body);
                     match &arm.ty {
                         EitherType::Concrete(ty) => {
                             let ty = self.fold_type(*(ty.clone()));
@@ -158,11 +169,28 @@ impl<'a> Fold for Folder<'a> {
                             result.arms.push(arm.clone().map_ty(|_| ty));
                         }
                         EitherType::Variadic(ty) => {
-                            if let Some(possible_types) = self.type_mapping.get_variadic(ty) {
+                            if let Some(possible_types) =
+                                self.type_mapping.get_variadic(ty).cloned()
+                            {
                                 for concrete_ty in possible_types {
-                                    result
-                                        .arms
-                                        .push(arm.clone().map_ty(|_| concrete_ty.clone()));
+                                    let ident = ty.ident();
+                                    // support refering to the variadic type as both anyA and A
+                                    let idents =
+                                        [quote::format_ident!("any{}", ident), ident.clone()];
+
+                                    for ident in &idents {
+                                        self.extra_mapping
+                                            .insert(syn::parse_quote!(#ident), concrete_ty.clone());
+                                    }
+
+                                    let mut arm = arm.clone().map_ty(|_| concrete_ty.clone());
+                                    arm.body = self.fold_expr(arm.body);
+
+                                    result.arms.push(arm);
+
+                                    for ident in &idents {
+                                        self.extra_mapping.remove(&syn::parse_quote!(#ident));
+                                    }
                                 }
                             }
                         }
