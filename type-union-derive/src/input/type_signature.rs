@@ -3,12 +3,85 @@ use std::mem;
 use indexmap::IndexMap;
 use syn::fold::Fold;
 use syn::parse::{Parse, ParseStream};
+use syn::spanned::Spanned;
 use syn::Token;
 
+use crate::input::TypeUnion;
 use crate::utils::{Context, LooksLike, PunctuatedExt};
+
+/// Represents a higher ranked type bound a la `for<T in Self>`.
+#[derive(Debug, Clone, PartialEq)]
+struct HigherRankedTypeBound {
+    _for_token: Token![for],
+    _lt_token: Token![<],
+    // constraints are not supported, so instead of `syn::TypeParam`,
+    // just `syn::Ident` is used.
+    ty_param: syn::Ident,
+    _in_token: Token![in],
+    target_ty: syn::Type,
+    _gt_token: Token![>],
+}
+
+impl HigherRankedTypeBound {
+    pub fn resolve(&mut self, current_ty: syn::Type, new_ty: syn::Type) -> syn::Result<()> {
+        let mut replacer = TypeReplacer { current_ty, new_ty };
+
+        self.target_ty = replacer.fold_type(self.target_ty.clone());
+
+        Ok(())
+    }
+
+    pub fn ident(&self) -> &syn::Ident {
+        &self.ty_param
+    }
+
+    pub fn types(&self) -> impl Iterator<Item = syn::Type> + '_ {
+        [&self.target_ty].into_iter().flat_map(|ty| {
+            if let syn::Type::Macro(syn::TypeMacro { mac }) = ty {
+                if let Ok(type_union) = TypeUnion::<syn::Type>::parse_macro(&mac) {
+                    return type_union.iter_types().cloned().collect::<Vec<_>>();
+                }
+            }
+
+            unreachable!("target type should have been resolved to a type union")
+        })
+    }
+}
+
+impl Parse for HigherRankedTypeBound {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        Ok(Self {
+            _for_token: input.parse()?,
+            _lt_token: input.parse()?,
+            ty_param: input.parse()?,
+            _in_token: input.parse()?,
+            target_ty: {
+                // for now, only `Self` is supported
+                let ty: Token![Self] = input.parse()?;
+
+                syn::Type::Path(syn::TypePath {
+                    qself: None,
+                    path: syn::parse_quote_spanned! { ty.span() => Self },
+                })
+            },
+            _gt_token: input.parse()?,
+        })
+    }
+}
+
+impl Context for HigherRankedTypeBound {
+    fn is_generic(&self, path: &syn::Path) -> bool {
+        if let Some(ident) = path.get_ident() {
+            ident == &self.ty_param
+        } else {
+            false
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeSignature {
+    hrt_bound: Option<HigherRankedTypeBound>,
     path: syn::Path,
     // optionally one can specify associated types:
     // Iterator<Item = u8>
@@ -62,6 +135,15 @@ impl TypeSignature {
 
     /// Resolves the type signature by replacing all instances of `current_ty` with `new_ty`.
     pub fn resolve(&mut self, current_ty: syn::Type, new_ty: syn::Type) -> syn::Result<()> {
+        self.hrt_bound = self
+            .hrt_bound
+            .take()
+            .map(|mut bound| {
+                bound.resolve(current_ty.clone(), new_ty.clone())?;
+                Ok::<_, syn::Error>(bound)
+            })
+            .transpose()?;
+
         let mut replacer = TypeReplacer { current_ty, new_ty };
 
         let mut path: syn::Path = syn::parse_quote!(placeholder);
@@ -85,12 +167,40 @@ impl TypeSignature {
 
         Ok(())
     }
+
+    #[must_use]
+    pub fn unfold(self) -> Vec<Self> {
+        let mut result = Vec::new();
+
+        if let Some(bound) = &self.hrt_bound {
+            result.extend(bound.types().map(|ty| {
+                let mut signature = self.clone();
+                signature.hrt_bound = None;
+                signature
+                    .resolve(
+                        syn::Type::Path(syn::TypePath {
+                            qself: None,
+                            path: syn::Path::from(bound.ident().clone()),
+                        }),
+                        ty,
+                    )
+                    .unwrap();
+
+                signature
+            }));
+        } else {
+            result.push(self);
+        }
+
+        result
+    }
 }
 
 impl LooksLike for TypeSignature {
     fn looks_like_with(&self, other: &Self, ctx: &dyn Context) -> bool {
-        self.path.looks_like_with(&other.path, ctx)
-            && self.self_ty.looks_like_with(&other.self_ty, ctx)
+        let ctx = (ctx, (self.hrt_bound.as_ref(), other.hrt_bound.as_ref()));
+        self.path.looks_like_with(&other.path, &ctx)
+            && self.self_ty.looks_like_with(&other.self_ty, &ctx)
         // TODO: compare bindings and args?
     }
 }
@@ -103,6 +213,10 @@ impl LooksLike<syn::Path> for TypeSignature {
 
 impl Parse for TypeSignature {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let mut hrt_bound = None;
+        if input.peek(Token![for]) {
+            hrt_bound = Some(input.parse()?);
+        }
         let path = input.parse::<syn::Path>()?;
 
         let mut result = Self::try_from(path)?;
@@ -112,6 +226,8 @@ impl Parse for TypeSignature {
             let ty = input.parse::<syn::Type>()?;
             result.self_ty = Some((_for, ty));
         }
+
+        result.hrt_bound = hrt_bound;
 
         Ok(result)
     }
@@ -162,6 +278,7 @@ impl TryFrom<syn::Path> for TypeSignature {
         }
 
         Ok(Self {
+            hrt_bound: None,
             path,
             bindings,
             args,
@@ -175,6 +292,31 @@ mod tests {
     use super::*;
 
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_looks_like_hrt_bound() {
+        let mut signature: TypeSignature = syn::parse_quote!(for<T in Self> From<T> for Self);
+        signature
+            .resolve(
+                syn::parse_quote!(Self),
+                syn::parse_quote!(type_union!(u8 | u16)),
+            )
+            .unwrap();
+
+        // the signature should now only look like `From<u8> for (u8 | u16)` and `From<u16> for (u8 | u16)`
+
+        let other_signature: TypeSignature = syn::parse_quote!(From<u8> for type_union!(u8 | u16));
+        assert!(signature.looks_like(&other_signature));
+
+        let other_signature: TypeSignature = syn::parse_quote!(From<u16> for type_union!(u8 | u16));
+        assert!(signature.looks_like(&other_signature));
+
+        let other_signature: TypeSignature = syn::parse_quote!(From<T> for type_union!(T | ..A));
+        assert!(signature.looks_like(&other_signature));
+
+        let other_signature: TypeSignature = syn::parse_quote!(From<U> for type_union!(U | ..A));
+        assert!(signature.looks_like(&other_signature));
+    }
 
     #[test]
     fn test_looks_like_path() {

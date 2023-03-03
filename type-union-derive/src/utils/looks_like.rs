@@ -16,6 +16,18 @@ impl PathArgumentsExt for syn::PathArguments {
 }
 
 pub trait Context {
+    /// Checks if the given path is a generic type parameter.
+    ///
+    /// For example, if the path is `T` and it is a generic,
+    /// then this method returns true.
+    ///
+    /// This is required, because types can be single letters
+    /// and generics can look like types:
+    /// ```
+    /// type T = u8; // here `T` is a type
+    ///
+    /// struct A<u8>(u8); // here `u8` is a generic and `A` is a type
+    /// ```
     #[must_use]
     fn is_generic(&self, path: &syn::Path) -> bool;
 }
@@ -23,6 +35,12 @@ pub trait Context {
 impl<'a, C: Context> Context for &'a C {
     fn is_generic(&self, name: &syn::Path) -> bool {
         (*self).is_generic(name)
+    }
+}
+
+impl<C: Context> Context for Option<C> {
+    fn is_generic(&self, name: &syn::Path) -> bool {
+        self.as_ref().map_or(false, |ctx| ctx.is_generic(name))
     }
 }
 

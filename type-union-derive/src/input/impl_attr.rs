@@ -1,3 +1,5 @@
+use std::mem;
+
 use quote::quote;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
@@ -50,6 +52,11 @@ impl ImplAttr {
         if let Some(first) = errors.next() {
             return Err(first.combine_all(errors));
         }
+
+        self.implements = mem::take(&mut self.implements)
+            .into_iter()
+            .flat_map(|sig| sig.unfold())
+            .collect();
 
         Ok(())
     }

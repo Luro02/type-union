@@ -31,7 +31,7 @@ pub struct TypeUnionSet {
     variadics: IndexMap<Variadic, InferredValue<SetId>>,
 }
 
-pub fn iter_subsets<I, T>(iter: I) -> impl Iterator<Item = IndexSet<T>>
+fn iter_subsets<I, T>(iter: I) -> impl Iterator<Item = IndexSet<T>>
 where
     T: Hash + Eq + Clone,
     I: IntoIterator<Item = T>,
