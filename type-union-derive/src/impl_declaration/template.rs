@@ -3,7 +3,7 @@ use quote::quote;
 use syn::fold::Fold;
 use syn::parse::{Parse, ParseStream};
 
-use crate::impl_declaration::{Folder, Generics, TypeSolver};
+use crate::impl_declaration::{Folder, Generics, MacroResolver, TypeSolver};
 use crate::input::{ImplAttr, TypeSignature, TypeUnion};
 use crate::utils::{Context, LooksLike};
 
@@ -153,7 +153,16 @@ impl Template {
             impls.extend(self.try_apply_args(solver, signature)?);
         }
 
-        Ok(quote!(#(#impls)*))
+        // expand macros from this crate, so that they do not have to be imported.
+        let mut macro_resolver = MacroResolver::default();
+        let mut result = Vec::new();
+        for item in impls {
+            result.push(macro_resolver.fold_item_impl(item));
+        }
+
+        let identity_macro = macro_resolver.identity_macro();
+
+        Ok(quote!( #identity_macro #(#result)*))
     }
 }
 

@@ -204,7 +204,7 @@ impl<'a> Fold for Folder<'a> {
             }
         }
 
-        mac
+        syn::fold::fold_macro(self, mac)
     }
 
     fn fold_where_clause(&mut self, mut where_clause: syn::WhereClause) -> syn::WhereClause {

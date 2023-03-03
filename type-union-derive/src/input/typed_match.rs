@@ -1,10 +1,12 @@
 use proc_macro2::{Ident, TokenStream};
 use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
+use syn::fold::Fold;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 use syn::{braced, Token};
 
+use crate::impl_declaration::MacroResolver;
 use crate::input::TypeUnion;
 use crate::utils::{assert_expr_is_type, is_macro};
 
@@ -173,7 +175,7 @@ impl ToTokens for TypedMatch<syn::Type> {
         let assertion = assert_expr_is_type(expr, ty);
         let arms = self.arms.iter();
 
-        let result = quote! {
+        let mut result_expr: syn::Expr = syn::parse_quote! {
             {
                 let __expr = #assertion;
 
@@ -185,6 +187,16 @@ impl ToTokens for TypedMatch<syn::Type> {
             }
         };
 
-        tokens.append_all(result);
+        let mut macro_resolver = MacroResolver::default();
+        result_expr = macro_resolver.fold_expr(result_expr);
+
+        let identity_macro = macro_resolver.identity_macro();
+
+        tokens.append_all(quote! {
+            {
+                #identity_macro
+                #result_expr
+            }
+        });
     }
 }
