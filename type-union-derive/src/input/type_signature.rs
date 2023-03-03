@@ -232,7 +232,7 @@ mod tests {
         assert_eq!(a.looks_like(&b), false);
     }
 
-    #[ignore = "too complicated to implement for now"]
+    #[ignore = "too complicated to implement for now, see #27"]
     #[test]
     fn test_looks_like_non_variant() {
         let template: TypeSignature = syn::parse_quote!(TryFrom<type_union!(T | ..A)> for T);

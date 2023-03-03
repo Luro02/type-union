@@ -161,22 +161,81 @@ impl TypeSolver {
             }
             (
                 syn::Type::Path(syn::TypePath {
-                    path: templ_path, ..
+                    path: templ_path,
+                    qself: Some(templ_qself),
                 }),
                 syn::Type::Path(syn::TypePath {
-                    path: decl_path, ..
+                    path: decl_path,
+                    qself: Some(decl_qself),
+                }),
+                // the paths store the trait cast/associated type, which should look equal
+                // for example:
+                // <T as SomeTrait>::SomeType
+                // <U as SomeTrait>::SomeType
+                //
+                // will have the paths:
+                // SomeTrait::SomeType
+                // SomeTrait::SomeType
+            ) if templ_path.looks_like_with(decl_path, &self.generics) => {
+                // both have a qself:
+                // <T as SomeTrait>::SomeType
+                // <U as SomeTrait>::SomeType
+
+                // the position should always be equal when they look alike?
+                assert_eq!(templ_qself.position, decl_qself.position);
+
+                // if the paths have generics, then constrain them:
+                if let Some((
+                    syn::PathSegment {
+                        arguments: syn::PathArguments::AngleBracketed(templ_args),
+                        ..
+                    },
+                    syn::PathSegment {
+                        arguments: syn::PathArguments::AngleBracketed(decl_args),
+                        ..
+                    },
+                )) = templ_path
+                    .segments
+                    .iter()
+                    .zip(decl_path.segments.iter())
+                    .rev()
+                    .next()
+                {
+                    // the paths have generics, so constrain them
+                    for (templ, decl) in templ_args
+                        .args
+                        .iter()
+                        .zip(decl_args.args.iter())
+                        .filter_map(|(left, right)| {
+                            if let (
+                                syn::GenericArgument::Type(left),
+                                syn::GenericArgument::Type(right),
+                            ) = (left, right)
+                            {
+                                Some((left, right))
+                            } else {
+                                None
+                            }
+                        })
+                    {
+                        self.add_type_constraint(templ, decl)?;
+                    }
+                }
+
+                self.add_type_constraint(templ_qself.ty.as_ref(), decl_qself.ty.as_ref())?;
+            }
+            (
+                syn::Type::Path(syn::TypePath {
+                    path: templ_path,
+                    qself: None,
+                }),
+                syn::Type::Path(syn::TypePath {
+                    path: decl_path,
+                    qself: None,
                 }),
             ) => {
-                // check if templ_path is a generic, then the generic = decl_path
-                if let Some(generic) = self.generics.get_generic(&templ_path) {
-                    self.set_generic_type_equal_to(
-                        generic,
-                        syn::Type::Path(syn::TypePath {
-                            qself: None,
-                            path: decl_path.clone(),
-                        }),
-                    );
-                } else if templ_path.looks_like(decl_path) {
+                // TODO: should this be called with context?!
+                if templ_path.looks_like_with(decl_path, &self.generics) {
                     // the paths look similar
                     // call this function on the generics of the paths
                     //
@@ -240,6 +299,16 @@ impl TypeSolver {
         }
 
         let mut unresolved_type_mapping = UnresolvedTypeMapping::new();
+
+        // if there are not sets, then only add the generic types for which the values are known
+        if sets.is_empty() {
+            let mut type_mapping = TypeMapping::new();
+            for (generic, ty) in self.generic_type_values {
+                type_mapping.add_generic_type(generic, ty);
+            }
+
+            return Ok(vec![type_mapping]);
+        }
 
         for type_union_set in sets {
             let type_mapping = type_union_set.solve(|id| self.get_set(&id).clone())?;
@@ -675,6 +744,50 @@ mod tests {
                     },
                 },
             },]
+        );
+    }
+
+    #[test]
+    fn test_add_qself_constraint() {
+        let mut solver = TypeSolver::new(Generics::new(syn::parse_quote!(<T>)));
+
+        solver
+            .add_type_constraint(
+                &syn::parse_quote!(<T as Trait>::Item),
+                &syn::parse_quote!(<u8 as Trait>::Item),
+            )
+            .unwrap();
+
+        assert_eq!(
+            solver.solve().unwrap(),
+            vec![type_mapping! {
+                types => {
+                    syn::parse_quote!(T) => syn::parse_quote!(u8),
+                },
+                variadics => {
+                },
+            }]
+        );
+
+        // test constraint on generic args:
+        let mut solver = TypeSolver::new(Generics::new(syn::parse_quote!(<T>)));
+
+        solver
+            .add_type_constraint(
+                &syn::parse_quote!(<u8 as Trait>::Value<T>),
+                &syn::parse_quote!(<u8 as Trait>::Value<u16>),
+            )
+            .unwrap();
+
+        assert_eq!(
+            solver.solve().unwrap(),
+            vec![type_mapping! {
+                types => {
+                    syn::parse_quote!(T) => syn::parse_quote!(u16),
+                },
+                variadics => {
+                },
+            }]
         );
     }
 }

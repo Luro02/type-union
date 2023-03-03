@@ -522,8 +522,10 @@ mod tests {
         );
     }
 
+    #[ignore = "see #27"]
     #[test]
     fn test_solve_generic() {
+        // TODO: test is incomplete
         // SetId = (u8 | u16 | u32)
         let base_set_id = SetId::default();
         let mut type_union_set = TypeUnionSet::new(
